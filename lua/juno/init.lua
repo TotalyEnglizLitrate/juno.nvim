@@ -111,20 +111,29 @@ local function set_declared_language(data, lang)
     data.metadata.language_info.name = lang
 end
 
+-- A left rail on every output line marks the block as output (distinct from
+-- source) while leaving the text itself in a high-contrast group. The glyph is
+-- configurable via config.output_rail.
+local OUTPUT_RAIL = "▎ "
+
 local function output_to_virt_lines(output)
     local vlines = {}
+    local rail = M.config.output_rail or OUTPUT_RAIL
+    local function push(text, text_hl, rail_hl)
+        table.insert(vlines, { { rail, rail_hl or "JunoOutputMarker" }, { text, text_hl } })
+    end
     if output.output_type == "stream" then
         for _, line in ipairs(clean_lines(get_cell_content(output.text))) do
-            table.insert(vlines, { { line, "Comment" } })
+            push(line, "JunoOutput")
         end
     elseif output.output_type == "execute_result" and output.data and output.data["text/plain"] then
         for _, line in ipairs(clean_lines(get_cell_content(output.data["text/plain"]))) do
-            table.insert(vlines, { { line, "String" } })
+            push(line, "JunoOutputResult")
         end
     elseif output.output_type == "error" then
-        table.insert(vlines, { { "Error: " .. (output.evalue or "unknown"), "ErrorMsg" } })
+        push("Error: " .. (output.evalue or "unknown"), "JunoOutputError", "JunoOutputError")
         for _, tb in ipairs(output.traceback or {}) do
-            table.insert(vlines, { { tb:gsub("\27%[[%d;]*m", ""), "ErrorMsg" } })
+            push(tb:gsub("\27%[[%d;]*m", ""), "JunoOutputError", "JunoOutputError")
         end
     end
     return vlines
@@ -858,12 +867,29 @@ function M.detach()
     vim.api.nvim_buf_delete(buf, { force = true })
 end
 
+-- Define juno's output highlight groups as overridable links (default = true, so a
+-- user's own definition wins). Re-applied on ColorScheme since a theme switch can
+-- clear them. Tune contrast by overriding e.g. JunoOutput / JunoOutputMarker.
+local function apply_highlights()
+    local links = {
+        JunoOutputMarker = "Special",          -- the left rail / output marker
+        JunoOutput       = "Normal",            -- stream (stdout/stderr) text
+        JunoOutputResult = "Normal",            -- execute_result (return value) text
+        JunoOutputError  = "DiagnosticError",   -- errors + tracebacks
+    }
+    for group, link in pairs(links) do
+        vim.api.nvim_set_hl(0, group, { link = link, default = true })
+    end
+end
+
 function M.setup(user_config)
     M.config = vim.tbl_deep_extend("force", {
         otter = { enabled = true, completion = true, diagnostics = true },
         -- Poll the notebook file and reload it when it changes on disk (e.g. after
         -- `jupyter run`). Set to false to disable.
         watch = true,
+        -- Left-rail glyph prefixed to every output line (highlight: JunoOutputMarker).
+        output_rail = OUTPUT_RAIL,
     }, user_config or {})
 
     local group = vim.api.nvim_create_augroup("juno", { clear = true })
@@ -874,6 +900,9 @@ function M.setup(user_config)
         group = group,
         callback = function(ev) M.attach(ev.file) end,
     })
+
+    apply_highlights()
+    vim.api.nvim_create_autocmd("ColorScheme", { group = group, callback = apply_highlights })
 end
 
 return M
