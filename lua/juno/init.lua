@@ -561,6 +561,198 @@ function M.new_cell(opts)
     end
 end
 
+-- Reset a code cell's outputs (no-op for markdown/raw, which carry none).
+local function clear_cell_outputs(cell)
+    if cell.cell_type == "code" then
+        cell.outputs = {}
+        cell.execution_count = vim.NIL
+    end
+end
+
+-- Run a structural edit on the cell under the cursor: syncs buffer edits into the
+-- model, calls fn(cells, current, state) to mutate data.cells, then re-renders and
+-- marks the buffer modified. fn returns the cell index to focus afterward (or nil).
+local function edit_current_cell(fn)
+    local buf = vim.api.nvim_get_current_buf()
+    local state = M.buf_state[buf]
+    if not state then
+        vim.notify("Juno: Not a notebook buffer", vim.log.levels.WARN)
+        return
+    end
+    sync_buffer(buf)
+    local current = M.current_cell(buf)
+    if not current then
+        vim.notify("Juno: Cursor is not in a cell", vim.log.levels.WARN)
+        return
+    end
+    local focus = fn(state.data.cells, current, state)
+    render(buf, state.data)
+    vim.api.nvim_set_option_value("modified", true, { buf = buf })
+    if focus then focus_cell(buf, focus) end
+end
+
+-- Delete the cell under the cursor.
+function M.delete_cell()
+    edit_current_cell(function(cells, current)
+        table.remove(cells, current.id)
+        return math.min(current.id, #cells)
+    end)
+end
+
+-- Move the current cell up (dir = -1) or down (dir = 1), swapping with its neighbor.
+function M.move_cell(dir)
+    edit_current_cell(function(cells, current)
+        local i = current.id
+        local j = i + dir
+        if j < 1 or j > #cells then
+            vim.notify("Juno: Cannot move cell further", vim.log.levels.WARN)
+            return i
+        end
+        cells[i], cells[j] = cells[j], cells[i]
+        return j
+    end)
+end
+
+-- Change the current cell's type. new_type is "code" or "markdown"; nil toggles.
+function M.change_cell_type(new_type)
+    edit_current_cell(function(cells, current)
+        local cell = cells[current.id]
+        new_type = new_type or (cell.cell_type == "code" and "markdown" or "code")
+        if cell.cell_type == new_type then return current.id end
+        cell.cell_type = new_type
+        if new_type == "code" then
+            cell.outputs = {}
+            cell.execution_count = vim.NIL
+        else
+            cell.outputs = nil
+            cell.execution_count = nil
+        end
+        return current.id
+    end)
+end
+
+-- Merge the current cell with a neighbor (dir = 1 below, dir = -1 above). The upper
+-- cell survives, keeping its type; its outputs are cleared since the source changed.
+function M.merge_cell(dir)
+    dir = dir or 1
+    edit_current_cell(function(cells, current)
+        local upper = (dir < 0) and (current.id - 1) or current.id
+        local lower = upper + 1
+        if upper < 1 or lower > #cells then
+            vim.notify("Juno: No adjacent cell to merge with", vim.log.levels.WARN)
+            return current.id
+        end
+        local top = get_cell_content(cells[upper].source)
+        if #top > 0 and top:sub(-1) ~= "\n" then top = top .. "\n" end
+        local merged = top .. get_cell_content(cells[lower].source)
+        cells[upper].source = lines_to_source(vim.split(merged, "\n"))
+        clear_cell_outputs(cells[upper])
+        table.remove(cells, lower)
+        return upper
+    end)
+end
+
+-- Split the current cell at the cursor line into two cells of the same type.
+function M.split_cell()
+    local cursor_row = vim.api.nvim_win_get_cursor(0)[1] - 1
+    edit_current_cell(function(cells, current)
+        local cell = cells[current.id]
+        local src = clean_lines(get_cell_content(cell.source))
+        -- Buffer row of the cell's first source line (code cells open with a fence).
+        local first = current.start_row + (cell.cell_type == "code" and 1 or 0)
+        local at = math.max(0, math.min(cursor_row - first, #src))
+
+        local top, bottom = {}, {}
+        for k = 1, at do top[k] = src[k] end
+        for k = at + 1, #src do bottom[#bottom + 1] = src[k] end
+
+        cell.source = lines_to_source(top)
+        clear_cell_outputs(cell)
+
+        local new_cell = nbformat.make_cell(cell.cell_type, nbformat.gen_id(nbformat.taken_ids(cells)))
+        new_cell.source = lines_to_source(bottom)
+        table.insert(cells, current.id + 1, new_cell)
+        return current.id + 1
+    end)
+end
+
+-- Clear outputs of the current cell.
+function M.clear_outputs()
+    edit_current_cell(function(cells, current)
+        clear_cell_outputs(cells[current.id])
+        return current.id
+    end)
+end
+
+-- Clear outputs of every cell in the notebook.
+function M.clear_all_outputs()
+    local buf = vim.api.nvim_get_current_buf()
+    local state = M.buf_state[buf]
+    if not state then
+        vim.notify("Juno: Not a notebook buffer", vim.log.levels.WARN)
+        return
+    end
+    sync_buffer(buf)
+    for _, cell in ipairs(state.data.cells) do
+        clear_cell_outputs(cell)
+    end
+    render(buf, state.data)
+    vim.api.nvim_set_option_value("modified", true, { buf = buf })
+end
+
+-- Copy the current cell into juno's cell clipboard (separate from vim registers).
+function M.yank_cell()
+    local buf = vim.api.nvim_get_current_buf()
+    local state = M.buf_state[buf]
+    if not state then
+        vim.notify("Juno: Not a notebook buffer", vim.log.levels.WARN)
+        return
+    end
+    sync_buffer(buf)
+    local current = M.current_cell(buf)
+    if not current then
+        vim.notify("Juno: Cursor is not in a cell", vim.log.levels.WARN)
+        return
+    end
+    M.cell_clipboard = vim.deepcopy(state.data.cells[current.id])
+    vim.notify("Juno: cell yanked", vim.log.levels.INFO)
+end
+
+-- Paste the yanked cell below (default) or above the current cell. Between cells
+-- (or in an empty notebook) it appends/prepends. The paste gets a fresh id.
+function M.paste_cell(where)
+    if not M.cell_clipboard then
+        vim.notify("Juno: no yanked cell", vim.log.levels.WARN)
+        return
+    end
+    local buf = vim.api.nvim_get_current_buf()
+    local state = M.buf_state[buf]
+    if not state then
+        vim.notify("Juno: Not a notebook buffer", vim.log.levels.WARN)
+        return
+    end
+    sync_buffer(buf)
+    local cells = state.data.cells
+    local current = M.current_cell(buf)
+    local at
+    if current then
+        at = current.id + (where == "above" and 0 or 1)
+    else
+        at = (where == "above") and 1 or (#cells + 1)
+    end
+
+    local cell = vim.deepcopy(M.cell_clipboard)
+    cell.id = nbformat.gen_id(nbformat.taken_ids(cells))
+    -- deepcopy can drop the empty-dict marker; keep metadata a JSON object.
+    if type(cell.metadata) ~= "table" or vim.tbl_isempty(cell.metadata) then
+        cell.metadata = vim.empty_dict()
+    end
+    table.insert(cells, at, cell)
+    render(buf, state.data)
+    vim.api.nvim_set_option_value("modified", true, { buf = buf })
+    focus_cell(buf, at)
+end
+
 function M.attach(file_path)
     local buf = vim.api.nvim_get_current_buf()
 
