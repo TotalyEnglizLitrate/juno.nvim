@@ -87,12 +87,25 @@ local function clean_lines(text)
     return vim.split(text, "\n")
 end
 
-local function kernel_language(data)
+-- The declared kernel language, or nil if the notebook doesn't specify one.
+local function declared_language(data)
     local m = data.metadata
-    return (m and (
+    return m and (
         (m.kernelspec and m.kernelspec.language) or
         (m.language_info and m.language_info.name)
-    )) or "python"
+    ) or nil
+end
+
+local function kernel_language(data)
+    return declared_language(data) or "python"
+end
+
+-- Record a notebook-level kernel language into metadata so render()'s fences and
+-- otter activation stay consistent. juno supports a single language per notebook.
+local function set_declared_language(data, lang)
+    data.metadata = data.metadata or {}
+    data.metadata.language_info = data.metadata.language_info or {}
+    data.metadata.language_info.name = lang
 end
 
 local function output_to_virt_lines(output)
@@ -160,6 +173,12 @@ local function render(buf, data)
 
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
 
+    -- Clear prior extmarks so render() is idempotent (it's re-run when cells
+    -- are added). ns_out extmarks use auto-ids, so without this they'd stack up.
+    vim.api.nvim_buf_clear_namespace(buf, M.ns_src, 0, -1)
+    vim.api.nvim_buf_clear_namespace(buf, M.ns_out, 0, -1)
+    vim.api.nvim_buf_clear_namespace(buf, M.ns_num, 0, -1)
+
     for i, cell in ipairs(data.cells or {}) do
         local pos = cell_pos[i]
 
@@ -193,7 +212,9 @@ local function render(buf, data)
     end
 end
 
-local function sync_and_save(buf)
+-- Pull the current buffer text back into state.data.cells[].source, stripping the
+-- fences juno adds around code cells. Run before re-rendering so unsaved edits survive.
+local function sync_buffer(buf)
     local state = M.buf_state[buf]
     if not state then return end
 
@@ -216,6 +237,13 @@ local function sync_and_save(buf)
             cell.source = source
         end
     end
+end
+
+local function sync_and_save(buf)
+    local state = M.buf_state[buf]
+    if not state then return end
+
+    sync_buffer(buf)
 
     local ok, json_str = pcall(vim.fn.json_encode, state.data)
     if not ok then
@@ -312,6 +340,94 @@ function M.prev_cell()
         if pos.start_row < cursor_row then prev_pos = pos else break end
     end
     if prev_pos then vim.api.nvim_win_set_cursor(0, { prev_pos.start_row + 1, 0 }) end
+end
+
+local function build_cell(cell_type)
+    if cell_type == "markdown" then
+        return { cell_type = "markdown", metadata = {}, source = {} }
+    end
+    return { cell_type = "code", metadata = {}, source = {}, outputs = {}, execution_count = vim.NIL }
+end
+
+-- Place the cursor on the first editable line of the cell with the given data id.
+local function focus_cell(buf, id)
+    for _, pos in ipairs(cell_positions(buf)) do
+        if pos.id == id then
+            local cell = M.buf_state[buf].data.cells[id]
+            local row = pos.start_row + (cell.cell_type == "code" and 1 or 0)
+            vim.api.nvim_win_set_cursor(0, { row + 1, 0 })
+            return
+        end
+    end
+end
+
+-- Create a new cell. opts = { cell_type = "code"|"markdown", language = string, where = "below"|"above" }.
+-- cell_type is prompted for when omitted; for code cells the language is a
+-- notebook-level property (juno supports one language per notebook), so it's only
+-- prompted for when the notebook doesn't already declare one.
+function M.new_cell(opts)
+    opts = opts or {}
+    local buf = vim.api.nvim_get_current_buf()
+    local state = M.buf_state[buf]
+    if not state then
+        vim.notify("Juno: Not a notebook buffer", vim.log.levels.WARN)
+        return
+    end
+
+    sync_buffer(buf)
+
+    local cells = state.data.cells or {}
+    state.data.cells = cells
+
+    -- Resolve insertion index (1-based) relative to the current cell.
+    local current = M.current_cell(buf)
+    local at
+    if current then
+        at = current.id + (opts.where == "above" and 0 or 1)
+    else
+        at = (opts.where == "above") and 1 or (#cells + 1)
+    end
+
+    local function insert(cell_type, lang)
+        if lang then set_declared_language(state.data, lang) end
+        table.insert(cells, at, build_cell(cell_type))
+        render(buf, state.data)
+        vim.api.nvim_set_option_value("modified", true, { buf = buf })
+        focus_cell(buf, at)
+        vim.cmd("startinsert")
+
+        -- Re-activate otter when we just established/changed the language so
+        -- completion and diagnostics target it.
+        if lang and M.config.otter.enabled then
+            local ok, otter = pcall(require, "otter")
+            if ok then
+                otter.activate({ lang }, M.config.otter.completion, M.config.otter.diagnostics)
+            end
+        end
+    end
+
+    local function with_type(cell_type)
+        if cell_type ~= "code" then
+            insert(cell_type, nil)
+        elseif opts.language then
+            insert("code", opts.language)
+        elseif declared_language(state.data) then
+            insert("code", nil)
+        else
+            vim.ui.input({ prompt = "Cell language: ", default = "python" }, function(lang)
+                if not lang or lang == "" then return end
+                insert("code", lang)
+            end)
+        end
+    end
+
+    if opts.cell_type then
+        with_type(opts.cell_type)
+    else
+        vim.ui.select({ "code", "markdown" }, { prompt = "New cell type:" }, function(choice)
+            if choice then with_type(choice) end
+        end)
+    end
 end
 
 function M.attach(file_path)

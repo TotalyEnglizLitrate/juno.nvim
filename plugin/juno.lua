@@ -14,6 +14,8 @@ vim.api.nvim_create_user_command("Juno", function(opts)
     require("juno").next_cell()
   elseif sub == "prev" then
     require("juno").prev_cell()
+  elseif sub == "new" then
+    require("juno").new_cell({ cell_type = opts.fargs[2] })
   elseif sub == "goto" then
     local n = tonumber(opts.fargs[2])
     if n then
@@ -31,7 +33,12 @@ end, {
     if #args == 2 then
       return vim.tbl_filter(function(item)
         return vim.startswith(item, ArgLead)
-      end, { "attach", "detach", "next", "prev", "goto" })
+      end, { "attach", "detach", "next", "prev", "goto", "new" })
+    end
+    if #args == 3 and args[2] == "new" then
+      return vim.tbl_filter(function(item)
+        return vim.startswith(item, ArgLead)
+      end, { "code", "markdown" })
     end
     return {}
   end,
