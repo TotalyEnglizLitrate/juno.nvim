@@ -239,6 +239,52 @@ local function sync_buffer(buf)
     end
 end
 
+-- Find a usable python interpreter, preferring the user's configured host prog.
+-- Returns nil if none is available on the system.
+local function find_python()
+    local candidates = {}
+    if vim.g.python3_host_prog and vim.g.python3_host_prog ~= "" then
+        table.insert(candidates, vim.g.python3_host_prog)
+    end
+    table.insert(candidates, "python3")
+    table.insert(candidates, "python")
+    for _, exe in ipairs(candidates) do
+        if vim.fn.executable(exe) == 1 then return exe end
+    end
+    return nil
+end
+
+-- Pretty-print JSON via python's json.tool for Jupyter-compatible formatting.
+-- Falls back to the (compact but valid) input if python is missing or errors,
+-- warning the user that the notebook was saved without pretty formatting.
+local warned_no_python = false
+local function pretty_json(json_str)
+    local python = find_python()
+    if not python then
+        if not warned_no_python then
+            warned_no_python = true
+            vim.notify(
+                "Juno: no python interpreter found; saving notebook without pretty formatting. "
+                    .. "Set vim.g.python3_host_prog or install python3 to enable it.",
+                vim.log.levels.WARN
+            )
+        end
+        return json_str
+    end
+
+    local pretty = vim.fn.system({ python, "-m", "json.tool" }, json_str)
+    if vim.v.shell_error == 0 and pretty and #pretty > 0 then
+        return pretty
+    end
+
+    vim.notify(
+        "Juno: json.tool formatting failed; saved without pretty formatting."
+            .. (pretty and #pretty > 0 and ("\n" .. vim.trim(pretty)) or ""),
+        vim.log.levels.WARN
+    )
+    return json_str
+end
+
 local function sync_and_save(buf)
     local state = M.buf_state[buf]
     if not state then return end
@@ -251,11 +297,7 @@ local function sync_and_save(buf)
         return
     end
 
-    local python = (vim.g.python3_host_prog and vim.g.python3_host_prog ~= "") and vim.g.python3_host_prog or "python3"
-    local pretty = vim.fn.system({ python, "-m", "json.tool" }, json_str)
-    if vim.v.shell_error == 0 and pretty and #pretty > 0 then
-        json_str = pretty
-    end
+    json_str = pretty_json(json_str)
 
     local f = io.open(state.file_path, "w")
     if not f then
