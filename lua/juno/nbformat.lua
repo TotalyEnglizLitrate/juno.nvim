@@ -62,6 +62,28 @@ function nb.make_cell(cell_type, id)
     return { id = id, cell_type = cell_type, metadata = vim.empty_dict(), source = {} }
 end
 
+-- The declared kernel language, or nil if the notebook doesn't specify one.
+function nb.declared_language(data)
+    local m = data.metadata
+    return m and (
+        (m.kernelspec and m.kernelspec.language) or
+        (m.language_info and m.language_info.name)
+    ) or nil
+end
+
+-- The kernel language, defaulting to python when the notebook declares none.
+function nb.kernel_language(data)
+    return nb.declared_language(data) or "python"
+end
+
+-- Record a notebook-level kernel language into metadata so render()'s fences and
+-- otter activation stay consistent. juno supports a single language per notebook.
+function nb.set_declared_language(data, lang)
+    data.metadata = data.metadata or {}
+    data.metadata.language_info = data.metadata.language_info or {}
+    data.metadata.language_info.name = lang
+end
+
 -- A fresh, valid notebook seeded with one empty code cell — mirrors VSCode's
 -- "New Jupyter Notebook" (ipynb.newUntitledIpynb). Used when juno opens a missing
 -- or blank .ipynb so the user has a cell to type into immediately.
