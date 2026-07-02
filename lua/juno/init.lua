@@ -3,6 +3,7 @@ local M = {}
 M.config = {}
 M.ns_src = vim.api.nvim_create_namespace("juno_src")
 M.ns_out = vim.api.nvim_create_namespace("juno_out")
+M.ns_num = vim.api.nvim_create_namespace("juno_num")
 M.buf_state = {}
 
 -- Public API: thin wrappers around otter so callers don't import otter directly.
@@ -136,10 +137,12 @@ local function render(buf, data)
     local idx = 0
 
     for i, cell in ipairs(data.cells or {}) do
-        local start = idx
+        local phantom_row = idx
+        local start = idx + 1
         local src = clean_lines(get_cell_content(cell.source))
         local h
 
+        table.insert(lines, "")  -- phantom line for cell number
         if cell.cell_type == "markdown" then
             vim.list_extend(lines, src)
             h = #src
@@ -151,21 +154,24 @@ local function render(buf, data)
         end
 
         table.insert(lines, "")
-        idx = idx + h + 1
-        cell_pos[i] = { start = start, h = h }
+        idx = idx + 1 + h + 1
+        cell_pos[i] = { start = start, h = h, phantom = phantom_row }
     end
 
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
 
     for i, cell in ipairs(data.cells or {}) do
         local pos = cell_pos[i]
-        local label = (cell.cell_type == "markdown") and " [md]" or (" [" .. lang .. "]")
+
+        vim.api.nvim_buf_set_extmark(buf, M.ns_num, pos.phantom, 0, {
+            id = i,
+            virt_text = { { "[" .. i .. "]", "InlayHint" } },
+            virt_text_pos = "overlay",
+        })
 
         vim.api.nvim_buf_set_extmark(buf, M.ns_src, pos.start, 0, {
             end_row = pos.start + pos.h,
             id = i,
-            virt_text = { { label, "NonText" } },
-            virt_text_pos = "eol",
         })
 
         if cell.cell_type == "code" and cell.outputs and #cell.outputs > 0 then
