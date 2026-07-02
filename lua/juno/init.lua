@@ -7,6 +7,7 @@ M.ns_num = vim.api.nvim_create_namespace("juno_num")
 M.buf_state = {}
 
 local uv = vim.uv or vim.loop
+local nbformat = require("juno.nbformat")
 
 -- Public API: thin wrappers around otter so callers don't import otter directly.
 local lsp_actions = {
@@ -214,6 +215,16 @@ local function render(buf, data)
     end
 end
 
+-- Convert a list of plain lines into an nbformat `source` array: every line but
+-- the last carries a trailing newline.
+local function lines_to_source(lines)
+    local source = {}
+    for k, line in ipairs(lines) do
+        source[k] = (k < #lines) and (line .. "\n") or line
+    end
+    return source
+end
+
 -- Pull the current buffer text back into state.data.cells[].source, stripping the
 -- fences juno adds around code cells. Run before re-rendering so unsaved edits survive.
 local function sync_buffer(buf)
@@ -232,24 +243,20 @@ local function sync_buffer(buf)
                 if #raw >= 1 and raw[#raw]:match("^```") then table.remove(raw) end
             end
 
-            local source = {}
-            for k, line in ipairs(raw) do
-                source[k] = (k < #raw) and (line .. "\n") or line
-            end
-            cell.source = source
+            cell.source = lines_to_source(raw)
         end
     end
 end
 
--- Find a usable python interpreter, preferring the user's configured host prog.
--- Returns nil if none is available on the system.
+-- Find a usable python interpreter. Prefer the one on $PATH (the project's active
+-- venv/nix-shell/devbox that nvim was launched in, which is where notebook packages
+-- like nbformat live) over g:python3_host_prog, which is typically a dedicated
+-- pynvim venv and often lacks project dependencies. Returns nil if none exist.
 local function find_python()
-    local candidates = {}
+    local candidates = { "python3", "python" }
     if vim.g.python3_host_prog and vim.g.python3_host_prog ~= "" then
         table.insert(candidates, vim.g.python3_host_prog)
     end
-    table.insert(candidates, "python3")
-    table.insert(candidates, "python")
     for _, exe in ipairs(candidates) do
         if vim.fn.executable(exe) == 1 then return exe end
     end
@@ -320,6 +327,7 @@ local function reload(buf)
         return
     end
 
+    nbformat.normalize(data)
     state.data = data
     render(buf, data)
     vim.api.nvim_set_option_value("modified", false, { buf = buf })
@@ -471,13 +479,6 @@ function M.prev_cell()
     if prev_pos then vim.api.nvim_win_set_cursor(0, { prev_pos.start_row + 1, 0 }) end
 end
 
-local function build_cell(cell_type)
-    if cell_type == "markdown" then
-        return { cell_type = "markdown", metadata = {}, source = {} }
-    end
-    return { cell_type = "code", metadata = {}, source = {}, outputs = {}, execution_count = vim.NIL }
-end
-
 -- Place the cursor on the first editable line of the cell with the given data id.
 local function focus_cell(buf, id)
     for _, pos in ipairs(cell_positions(buf)) do
@@ -519,7 +520,8 @@ function M.new_cell(opts)
 
     local function insert(cell_type, lang)
         if lang then set_declared_language(state.data, lang) end
-        table.insert(cells, at, build_cell(cell_type))
+        local cell = nbformat.make_cell(cell_type, nbformat.gen_id(nbformat.taken_ids(cells)))
+        table.insert(cells, at, cell)
         render(buf, state.data)
         vim.api.nvim_set_option_value("modified", true, { buf = buf })
         focus_cell(buf, at)
@@ -568,6 +570,8 @@ function M.attach(file_path)
         vim.notify("Juno: Invalid notebook file", vim.log.levels.ERROR)
         return
     end
+
+    nbformat.normalize(data)
 
     vim.api.nvim_set_option_value("buftype", "acwrite", { buf = buf })
     vim.api.nvim_set_option_value("filetype", "markdown", { buf = buf })
