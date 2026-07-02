@@ -61,6 +61,18 @@ function nb.make_cell(cell_type, id)
     }
 end
 
+-- A fresh, valid notebook seeded with one empty code cell — mirrors VSCode's
+-- "New Jupyter Notebook" (ipynb.newUntitledIpynb). Used when juno opens a missing
+-- or blank .ipynb so the user has a cell to type into immediately.
+function nb.new_notebook()
+    return {
+        cells = { nb.make_cell("code") },
+        metadata = vim.empty_dict(),
+        nbformat = nb.NBFORMAT,
+        nbformat_minor = nb.NBFORMAT_MINOR,
+    }
+end
+
 -- Bring a decoded notebook up to a valid nbformat 4.5 shape in place. Non-
 -- destructive: it fills/coerces required fields but never strips unknown ones.
 --   * required top-level fields (cells, nbformat, nbformat_minor, metadata-as-object)

@@ -757,10 +757,22 @@ function M.attach(file_path)
     local buf = vim.api.nvim_get_current_buf()
 
     local content = vim.fn.filereadable(file_path) == 1 and vim.fn.readfile(file_path) or {}
-    local ok, data = pcall(vim.fn.json_decode, table.concat(content, "\n"))
-    if not ok or type(data) ~= "table" then
-        vim.notify("Juno: Invalid notebook file", vim.log.levels.ERROR)
-        return
+    local text = table.concat(content, "\n")
+
+    -- A missing or blank file is a new notebook: seed base data (one empty code
+    -- cell) rather than erroring. Non-blank content that fails to parse is a real
+    -- error and still surfaces as one.
+    local data, seeded
+    if text:match("^%s*$") then
+        data = nbformat.new_notebook()
+        seeded = true
+    else
+        local ok, decoded = pcall(vim.fn.json_decode, text)
+        if not ok or type(decoded) ~= "table" then
+            vim.notify("Juno: Invalid notebook file", vim.log.levels.ERROR)
+            return
+        end
+        data = decoded
     end
 
     nbformat.normalize(data)
@@ -771,7 +783,11 @@ function M.attach(file_path)
     stop_watcher(M.buf_state[buf])  -- re-attach: drop any prior watcher
     M.buf_state[buf] = { file_path = file_path, data = data }
     render(buf, data)
-    vim.api.nvim_set_option_value("modified", false, { buf = buf })
+    -- A seeded notebook has unsaved base content; a loaded one starts clean.
+    vim.api.nvim_set_option_value("modified", seeded or false, { buf = buf })
+    if seeded then
+        vim.notify("Juno: new notebook (unsaved) — :w to create " .. file_path, vim.log.levels.INFO)
+    end
 
     if M.config.otter.enabled then
         local otter_ok, otter = pcall(require, "otter")
@@ -851,7 +867,9 @@ function M.setup(user_config)
     }, user_config or {})
 
     local group = vim.api.nvim_create_augroup("juno", { clear = true })
-    vim.api.nvim_create_autocmd("BufReadCmd", {
+    -- BufReadCmd handles existing files; BufNewFile handles opening a path that
+    -- doesn't exist yet (a brand-new notebook), which attach() seeds with base data.
+    vim.api.nvim_create_autocmd({ "BufReadCmd", "BufNewFile" }, {
         pattern = "*.ipynb",
         group = group,
         callback = function(ev) M.attach(ev.file) end,
