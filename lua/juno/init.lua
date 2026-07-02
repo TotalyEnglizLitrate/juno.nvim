@@ -180,8 +180,13 @@ local function render(buf, data)
                 vim.list_extend(vlines, output_to_virt_lines(out))
             end
             if #vlines > 0 then
-                vim.api.nvim_buf_set_extmark(buf, M.ns_out, pos.start + pos.h - 1, 0, {
+                -- Anchor to the trailing spacer (a real blank line), not the
+                -- closing ``` fence: markdown treesitter conceals fence lines
+                -- with `conceal_lines`, which collapses the line and takes any
+                -- attached virt_lines with it whenever conceallevel > 0.
+                vim.api.nvim_buf_set_extmark(buf, M.ns_out, pos.start + pos.h, 0, {
                     virt_lines = vlines,
+                    virt_lines_above = true,
                 })
             end
         end
@@ -321,9 +326,6 @@ function M.attach(file_path)
 
     vim.api.nvim_set_option_value("buftype", "acwrite", { buf = buf })
     vim.api.nvim_set_option_value("filetype", "markdown", { buf = buf })
-    -- markdown ftplugin + treesitter conceals ``` fences; zero it so virt_lines
-    -- on fence lines are always visible, not just when the cursor is on them.
-    vim.api.nvim_set_option_value("conceallevel", 0, { win = 0 })
 
     M.buf_state[buf] = { file_path = file_path, data = data }
     render(buf, data)
@@ -353,13 +355,6 @@ function M.attach(file_path)
     vim.api.nvim_create_autocmd("BufWriteCmd", {
         buffer = buf,
         callback = function() sync_and_save(buf) end,
-    })
-
-    vim.api.nvim_create_autocmd("BufWinEnter", {
-        buffer = buf,
-        callback = function()
-            vim.api.nvim_set_option_value("conceallevel", 0, { win = 0 })
-        end,
     })
 
     vim.api.nvim_create_autocmd("BufWipeout", {
