@@ -6,6 +6,8 @@ M.ns_out = vim.api.nvim_create_namespace("juno_out")
 M.ns_num = vim.api.nvim_create_namespace("juno_num")
 M.buf_state = {}
 
+local uv = vim.uv or vim.loop
+
 -- Public API: thin wrappers around otter so callers don't import otter directly.
 local lsp_actions = {
     hover            = "ask_hover",
@@ -285,6 +287,87 @@ local function pretty_json(json_str)
     return json_str
 end
 
+local function mtime_eq(a, b)
+    return a ~= nil and b ~= nil and a.sec == b.sec and a.nsec == b.nsec
+end
+
+-- Record the file's current mtime so the watcher can tell our own writes apart
+-- from external changes. Call after every save.
+local function stamp_disk_mtime(state)
+    local st = uv.fs_stat(state.file_path)
+    state.disk_mtime = st and st.mtime or nil
+end
+
+local function stop_watcher(state)
+    if state and state.watcher then
+        state.watcher:stop()
+        if not state.watcher:is_closing() then state.watcher:close() end
+        state.watcher = nil
+    end
+end
+
+-- Re-read the notebook from disk into an already-attached buffer and re-render.
+-- Unlike attach() this doesn't touch otter or autocmds; it just refreshes content
+-- (render() is idempotent), so it's safe for a background buffer.
+local function reload(buf)
+    local state = M.buf_state[buf]
+    if not state or not vim.api.nvim_buf_is_valid(buf) then return end
+
+    local content = vim.fn.filereadable(state.file_path) == 1 and vim.fn.readfile(state.file_path) or {}
+    local ok, data = pcall(vim.fn.json_decode, table.concat(content, "\n"))
+    if not ok or type(data) ~= "table" then
+        vim.notify("Juno: notebook changed on disk but is not valid JSON; not reloading.", vim.log.levels.WARN)
+        return
+    end
+
+    state.data = data
+    render(buf, data)
+    vim.api.nvim_set_option_value("modified", false, { buf = buf })
+    stamp_disk_mtime(state)
+    vim.notify("Juno: reloaded notebook from disk", vim.log.levels.INFO)
+end
+
+local function on_disk_change(buf, curr)
+    local state = M.buf_state[buf]
+    if not state or not vim.api.nvim_buf_is_valid(buf) then return end
+
+    -- Ignore our own writes (and no-op stat changes): sync_and_save re-stamps
+    -- disk_mtime after writing, so a matching mtime means nothing external changed.
+    local st = curr or uv.fs_stat(state.file_path)
+    if st and mtime_eq(st.mtime, state.disk_mtime) then return end
+
+    -- Deferred: no 3-way merge yet, so don't clobber unsaved work.
+    if vim.api.nvim_get_option_value("modified", { buf = buf }) then
+        vim.notify(
+            "Juno: notebook changed on disk but the buffer has unsaved edits; not reloading. "
+                .. "Save (:w overwrites disk) or discard and :edit to reload.",
+            vim.log.levels.WARN
+        )
+        -- Update the stamp so we don't nag again for this same on-disk version.
+        state.disk_mtime = st and st.mtime or state.disk_mtime
+        return
+    end
+
+    reload(buf)
+end
+
+local function start_watcher(buf, file_path)
+    local state = M.buf_state[buf]
+    if not state then return end
+    stop_watcher(state)
+    stamp_disk_mtime(state)
+
+    local poll = uv.new_fs_poll()
+    if not poll then return end
+    state.watcher = poll
+    -- fs_poll (stat-based) rather than fs_event so we survive atomic-rename
+    -- writes (nbconvert/jupyter replace the file, which breaks inode watches).
+    poll:start(file_path, 1000, function(err, _prev, curr)
+        if err then return end
+        vim.schedule(function() on_disk_change(buf, curr) end)
+    end)
+end
+
 local function sync_and_save(buf)
     local state = M.buf_state[buf]
     if not state then return end
@@ -306,6 +389,10 @@ local function sync_and_save(buf)
     end
     f:write(json_str)
     f:close()
+
+    -- Record the mtime we just wrote so the file watcher doesn't treat our own
+    -- save as an external change and reload over it.
+    stamp_disk_mtime(state)
 
     vim.api.nvim_set_option_value("modified", false, { buf = buf })
     vim.notify("Juno: Notebook saved", vim.log.levels.INFO)
@@ -485,6 +572,7 @@ function M.attach(file_path)
     vim.api.nvim_set_option_value("buftype", "acwrite", { buf = buf })
     vim.api.nvim_set_option_value("filetype", "markdown", { buf = buf })
 
+    stop_watcher(M.buf_state[buf])  -- re-attach: drop any prior watcher
     M.buf_state[buf] = { file_path = file_path, data = data }
     render(buf, data)
     vim.api.nvim_set_option_value("modified", false, { buf = buf })
@@ -530,8 +618,15 @@ function M.attach(file_path)
     vim.api.nvim_create_autocmd("BufWipeout", {
         buffer = buf,
         group = group,
-        callback = function() M.buf_state[buf] = nil end,
+        callback = function()
+            stop_watcher(M.buf_state[buf])
+            M.buf_state[buf] = nil
+        end,
     })
+
+    if M.config.watch then
+        start_watcher(buf, file_path)
+    end
 end
 
 function M.detach()
@@ -554,6 +649,9 @@ end
 function M.setup(user_config)
     M.config = vim.tbl_deep_extend("force", {
         otter = { enabled = true, completion = true, diagnostics = true },
+        -- Poll the notebook file and reload it when it changes on disk (e.g. after
+        -- `jupyter run`). Set to false to disable.
+        watch = true,
     }, user_config or {})
 
     local group = vim.api.nvim_create_augroup("juno", { clear = true })
