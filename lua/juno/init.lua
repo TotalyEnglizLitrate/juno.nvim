@@ -516,13 +516,20 @@ function M.attach(file_path)
         end
     end
 
+    -- Scope the buffer-local autocmds to a per-buffer group cleared on each
+    -- attach, so re-attaching (e.g. a :edit reload re-firing BufReadCmd) replaces
+    -- them instead of stacking duplicate handlers.
+    local group = vim.api.nvim_create_augroup("juno_buf_" .. buf, { clear = true })
+
     vim.api.nvim_create_autocmd("BufWriteCmd", {
         buffer = buf,
+        group = group,
         callback = function() sync_and_save(buf) end,
     })
 
     vim.api.nvim_create_autocmd("BufWipeout", {
         buffer = buf,
+        group = group,
         callback = function() M.buf_state[buf] = nil end,
     })
 end
