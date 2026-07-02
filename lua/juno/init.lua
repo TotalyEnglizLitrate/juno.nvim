@@ -321,6 +321,9 @@ function M.attach(file_path)
 
     vim.api.nvim_set_option_value("buftype", "acwrite", { buf = buf })
     vim.api.nvim_set_option_value("filetype", "markdown", { buf = buf })
+    -- markdown ftplugin + treesitter conceals ``` fences; zero it so virt_lines
+    -- on fence lines are always visible, not just when the cursor is on them.
+    vim.api.nvim_set_option_value("conceallevel", 0, { win = 0 })
 
     M.buf_state[buf] = { file_path = file_path, data = data }
     render(buf, data)
@@ -350,6 +353,13 @@ function M.attach(file_path)
     vim.api.nvim_create_autocmd("BufWriteCmd", {
         buffer = buf,
         callback = function() sync_and_save(buf) end,
+    })
+
+    vim.api.nvim_create_autocmd("BufWinEnter", {
+        buffer = buf,
+        callback = function()
+            vim.api.nvim_set_option_value("conceallevel", 0, { win = 0 })
+        end,
     })
 
     vim.api.nvim_create_autocmd("BufWipeout", {
