@@ -130,6 +130,16 @@ function M.setup(user_config)
     }, user_config or {})
     M.config = core.config  -- keep the compat alias pointing at the merged config
 
+    -- render-markdown.nvim is a hard dependency: notebooks are rendered into a
+    -- Markdown buffer and rely on it for the display.
+    if not pcall(require, "render-markdown") then
+        vim.notify(
+            "Juno: render-markdown.nvim is required but was not found. "
+                .. "Install MeanderingProgrammer/render-markdown.nvim.",
+            vim.log.levels.ERROR
+        )
+    end
+
     local group = vim.api.nvim_create_augroup("juno", { clear = true })
     -- BufReadCmd handles existing files; BufNewFile handles opening a path that
     -- doesn't exist yet (a brand-new notebook), which attach() seeds with base data.
