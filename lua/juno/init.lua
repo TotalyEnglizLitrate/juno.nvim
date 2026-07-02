@@ -5,6 +5,73 @@ M.ns_src = vim.api.nvim_create_namespace("juno_src")
 M.ns_out = vim.api.nvim_create_namespace("juno_out")
 M.buf_state = {}
 
+-- Public API: thin wrappers around otter so callers don't import otter directly.
+local lsp_actions = {
+    hover            = "ask_hover",
+    definition       = "ask_definition",
+    type_definition  = "ask_type_definition",
+    references       = "ask_references",
+    rename           = "ask_rename",
+    format           = "ask_format",
+    document_symbols = "ask_document_symbols",
+}
+
+for name, otter_fn in pairs(lsp_actions) do
+    M[name] = function()
+        local ok, otter = pcall(require, "otter")
+        if ok then otter[otter_fn]() end
+    end
+end
+
+-- LSP method -> otter function name, used by the buf_request patch.
+local method_to_otter = {
+    ["textDocument/hover"]          = "ask_hover",
+    ["textDocument/definition"]     = "ask_definition",
+    ["textDocument/typeDefinition"] = "ask_type_definition",
+    ["textDocument/references"]     = "ask_references",
+    ["textDocument/rename"]         = "ask_rename",
+    ["textDocument/formatting"]     = "ask_format",
+    ["textDocument/documentSymbol"] = "ask_document_symbols",
+}
+
+-- Installed once: routes vim.lsp.buf_request calls from notebook buffers through otter,
+-- so standard vim.lsp.buf.hover / gd / etc. work without any user keymap config.
+local lsp_patched = false
+local function patch_lsp()
+    if lsp_patched then return end
+    lsp_patched = true
+    local orig = vim.lsp.buf_request
+    vim.lsp.buf_request = function(bufnr, method, params, handler)
+        local b = (not bufnr or bufnr == 0) and vim.api.nvim_get_current_buf() or bufnr
+        if M.buf_state[b] then
+            local fn = method_to_otter[method]
+            if fn then
+                local ok, otter = pcall(require, "otter")
+                if ok then otter[fn]() end
+                return {}, function() end
+            end
+        end
+        return orig(bufnr, method, params, handler)
+    end
+end
+
+-- After otter creates its shadow buffer and a real LSP client attaches to it,
+-- relay LspAttach to the notebook buffer with that client's ID so the user's
+-- on_attach / LspAttach handler runs and sets up keymaps as usual.
+local function relay_lsp_attach(notebook_buf, shadow_buf)
+    vim.api.nvim_create_autocmd("LspAttach", {
+        buffer = shadow_buf,
+        once = true,
+        callback = function(ev)
+            if not vim.api.nvim_buf_is_valid(notebook_buf) then return end
+            vim.api.nvim_exec_autocmds("LspAttach", {
+                buffer = notebook_buf,
+                data = { client_id = ev.data.client_id },
+            })
+        end,
+    })
+end
+
 local function get_cell_content(source)
     if type(source) == "table" then
         return table.concat(source, "")
@@ -253,6 +320,27 @@ function M.attach(file_path)
     render(buf, data)
     vim.api.nvim_set_option_value("modified", false, { buf = buf })
 
+    if M.config.otter.enabled then
+        local otter_ok, otter = pcall(require, "otter")
+        if otter_ok then
+            local cfg = M.config.otter
+            local lang = kernel_language(data)
+            otter.activate({ lang }, cfg.completion, cfg.diagnostics)
+            patch_lsp()
+
+            -- otter.keeper stores shadow buffer state keyed by [notebook_buf][lang]
+            local keeper_ok, keeper = pcall(require, "otter.keeper")
+            if keeper_ok then
+                local lang_state = keeper.otters_attached
+                    and keeper.otters_attached[buf]
+                    and keeper.otters_attached[buf][lang]
+                if lang_state and lang_state.bufnr then
+                    relay_lsp_attach(buf, lang_state.bufnr)
+                end
+            end
+        end
+    end
+
     vim.api.nvim_create_autocmd("BufWriteCmd", {
         buffer = buf,
         callback = function() sync_and_save(buf) end,
@@ -282,7 +370,9 @@ function M.detach()
 end
 
 function M.setup(user_config)
-    M.config = vim.tbl_deep_extend("force", {}, user_config or {})
+    M.config = vim.tbl_deep_extend("force", {
+        otter = { enabled = true, completion = true, diagnostics = true },
+    }, user_config or {})
 
     local group = vim.api.nvim_create_augroup("juno", { clear = true })
     vim.api.nvim_create_autocmd("BufReadCmd", {
