@@ -46,6 +46,22 @@ local function output_to_virt_lines(output)
     return vlines
 end
 
+-- Returns cell positions from ns_src extmarks, sorted by start row.
+-- Each entry: { id, start_row, end_row }
+local function cell_positions(buf)
+    local marks = vim.api.nvim_buf_get_extmarks(buf, M.ns_src, 0, -1, { details = true })
+    local positions = {}
+    for _, mark in ipairs(marks) do
+        -- mark = { id, start_row, start_col, details }
+        table.insert(positions, {
+            id = mark[1],
+            start_row = mark[2],
+            end_row = mark[4].end_row,
+        })
+    end
+    return positions
+end
+
 local function render(buf, data)
     local lang = kernel_language(data)
     local lines = {}
@@ -76,10 +92,13 @@ local function render(buf, data)
 
     for i, cell in ipairs(data.cells or {}) do
         local pos = cell_pos[i]
+        local label = (cell.cell_type == "markdown") and " [md]" or (" [" .. lang .. "]")
 
         vim.api.nvim_buf_set_extmark(buf, M.ns_src, pos.start, 0, {
             end_row = pos.start + pos.h,
             id = i,
+            virt_text = { { label, "NonText" } },
+            virt_text_pos = "eol",
         })
 
         if cell.cell_type == "code" and cell.outputs and #cell.outputs > 0 then
@@ -142,6 +161,79 @@ local function sync_and_save(buf)
 
     vim.api.nvim_set_option_value("modified", false, { buf = buf })
     vim.notify("Juno: Notebook saved", vim.log.levels.INFO)
+end
+
+-- Returns info about the cell the cursor is currently in, or nil if between cells.
+-- { idx, id, type, start_row, end_row }
+function M.current_cell(buf)
+    buf = buf or vim.api.nvim_get_current_buf()
+    if not M.buf_state[buf] then return nil end
+    local cursor_row = vim.api.nvim_win_get_cursor(0)[1] - 1
+    local positions = cell_positions(buf)
+    for list_idx, pos in ipairs(positions) do
+        if cursor_row >= pos.start_row and cursor_row < pos.end_row then
+            local cell = M.buf_state[buf].data.cells[pos.id]
+            return { idx = list_idx, id = pos.id, type = cell.cell_type, start_row = pos.start_row, end_row = pos.end_row }
+        end
+    end
+    return nil
+end
+
+-- Jump to the nth cell (1-indexed).
+function M.goto_cell(n)
+    local buf = vim.api.nvim_get_current_buf()
+    if not M.buf_state[buf] then return end
+    local pos = cell_positions(buf)[n]
+    if pos then
+        vim.api.nvim_win_set_cursor(0, { pos.start_row + 1, 0 })
+    else
+        vim.notify("Juno: No cell " .. n, vim.log.levels.WARN)
+    end
+end
+
+function M.next_cell()
+    local buf = vim.api.nvim_get_current_buf()
+    if not M.buf_state[buf] then return end
+    local cursor_row = vim.api.nvim_win_get_cursor(0)[1] - 1
+    local positions = cell_positions(buf)
+
+    for list_idx, pos in ipairs(positions) do
+        if cursor_row >= pos.start_row and cursor_row < pos.end_row then
+            local next_pos = positions[list_idx + 1]
+            if next_pos then vim.api.nvim_win_set_cursor(0, { next_pos.start_row + 1, 0 }) end
+            return
+        end
+    end
+
+    -- Cursor is in a spacer; jump to the next cell start after cursor.
+    for _, pos in ipairs(positions) do
+        if pos.start_row > cursor_row then
+            vim.api.nvim_win_set_cursor(0, { pos.start_row + 1, 0 })
+            return
+        end
+    end
+end
+
+function M.prev_cell()
+    local buf = vim.api.nvim_get_current_buf()
+    if not M.buf_state[buf] then return end
+    local cursor_row = vim.api.nvim_win_get_cursor(0)[1] - 1
+    local positions = cell_positions(buf)
+
+    for list_idx, pos in ipairs(positions) do
+        if cursor_row >= pos.start_row and cursor_row < pos.end_row then
+            local prev_pos = positions[list_idx - 1]
+            if prev_pos then vim.api.nvim_win_set_cursor(0, { prev_pos.start_row + 1, 0 }) end
+            return
+        end
+    end
+
+    -- Cursor is in a spacer; jump to the last cell start before cursor.
+    local prev_pos = nil
+    for _, pos in ipairs(positions) do
+        if pos.start_row < cursor_row then prev_pos = pos else break end
+    end
+    if prev_pos then vim.api.nvim_win_set_cursor(0, { prev_pos.start_row + 1, 0 }) end
 end
 
 function M.attach(file_path)
