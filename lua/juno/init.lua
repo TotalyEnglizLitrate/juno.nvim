@@ -349,6 +349,12 @@ function M.attach(file_path)
                     relay_lsp_attach(buf, lang_state.bufnr)
                 end
             end
+        else
+            vim.notify(
+                "Juno: otter.nvim not found; LSP features (hover, definition, "
+                    .. "references, rename, format, completion, diagnostics) are unavailable.",
+                vim.log.levels.ERROR
+            )
         end
     end
 
