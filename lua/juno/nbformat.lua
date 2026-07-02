@@ -43,22 +43,23 @@ function nb.gen_id(taken)
     return id
 end
 
--- Build a fresh, valid nbformat cell. `id` should come from gen_id; one is
--- generated if omitted. metadata must be a JSON object, so vim.empty_dict()
--- (an empty Lua table would encode as `[]`); source/outputs are arrays.
+-- Build a fresh, valid nbformat cell of the given type ("code", "markdown", or
+-- "raw"). `id` should come from gen_id; one is generated if omitted. metadata must
+-- be a JSON object, so vim.empty_dict() (an empty Lua table would encode as `[]`);
+-- source/outputs are arrays. Only code cells carry outputs/execution_count.
 function nb.make_cell(cell_type, id)
     id = id or nb.gen_id(nil)
-    if cell_type == "markdown" then
-        return { id = id, cell_type = "markdown", metadata = vim.empty_dict(), source = {} }
+    if cell_type == "code" then
+        return {
+            id = id,
+            cell_type = "code",
+            metadata = vim.empty_dict(),
+            source = {},
+            outputs = {},
+            execution_count = vim.NIL,
+        }
     end
-    return {
-        id = id,
-        cell_type = "code",
-        metadata = vim.empty_dict(),
-        source = {},
-        outputs = {},
-        execution_count = vim.NIL,
-    }
+    return { id = id, cell_type = cell_type, metadata = vim.empty_dict(), source = {} }
 end
 
 -- A fresh, valid notebook seeded with one empty code cell — mirrors VSCode's

@@ -63,8 +63,8 @@ end, {
     end
     if #args == 3 then
       local second = ({
-        new = { "code", "markdown" },
-        type = { "code", "markdown" },
+        new = { "code", "markdown", "raw" },
+        type = { "code", "markdown", "raw" },
         move = { "up", "down" },
         merge = { "up", "down" },
         clear = { "all" },

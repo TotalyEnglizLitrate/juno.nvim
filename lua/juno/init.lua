@@ -9,6 +9,8 @@ M.buf_state = {}
 local uv = vim.uv or vim.loop
 local nbformat = require("juno.nbformat")
 
+local VALID_CELL_TYPES = { code = true, markdown = true, raw = true }
+
 -- Public API: thin wrappers around otter so callers don't import otter directly.
 local lsp_actions = {
     hover            = "ask_hover",
@@ -168,14 +170,17 @@ local function render(buf, data)
         local h
 
         table.insert(lines, "")  -- phantom line for cell number
-        if cell.cell_type == "markdown" then
-            vim.list_extend(lines, src)
-            h = #src
-        else
+        -- Only code cells are fenced; markdown and raw cells render as plain lines.
+        -- (sync_buffer strips fences for code cells only, so fencing a raw cell would
+        -- bake the ``` lines into its source on save.)
+        if cell.cell_type == "code" then
             table.insert(lines, "```" .. lang)
             vim.list_extend(lines, src)
             table.insert(lines, "```")
             h = #src + 2
+        else
+            vim.list_extend(lines, src)
+            h = #src
         end
 
         table.insert(lines, "")
@@ -506,6 +511,10 @@ end
 -- prompted for when the notebook doesn't already declare one.
 function M.new_cell(opts)
     opts = opts or {}
+    if opts.cell_type ~= nil and not VALID_CELL_TYPES[opts.cell_type] then
+        vim.notify("Juno: invalid cell type: " .. tostring(opts.cell_type), vim.log.levels.ERROR)
+        return
+    end
     local buf = vim.api.nvim_get_current_buf()
     local state = M.buf_state[buf]
     if not state then
@@ -564,7 +573,7 @@ function M.new_cell(opts)
     if opts.cell_type then
         with_type(opts.cell_type)
     else
-        vim.ui.select({ "code", "markdown" }, { prompt = "New cell type:" }, function(choice)
+        vim.ui.select({ "code", "markdown", "raw" }, { prompt = "New cell type:" }, function(choice)
             if choice then with_type(choice) end
         end)
     end
@@ -622,8 +631,13 @@ function M.move_cell(dir)
     end)
 end
 
--- Change the current cell's type. new_type is "code" or "markdown"; nil toggles.
+-- Change the current cell's type ("code", "markdown", or "raw"); nil toggles
+-- between code and markdown.
 function M.change_cell_type(new_type)
+    if new_type ~= nil and not VALID_CELL_TYPES[new_type] then
+        vim.notify("Juno: invalid cell type: " .. tostring(new_type), vim.log.levels.ERROR)
+        return
+    end
     edit_current_cell(function(cells, current)
         local cell = cells[current.id]
         new_type = new_type or (cell.cell_type == "code" and "markdown" or "code")
