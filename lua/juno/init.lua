@@ -43,6 +43,7 @@ M.paste_cell        = cells.paste_cell
 -- Cell execution: run the current cell, or "all" to run every code cell.
 M.run = exec.run
 M.interrupt = exec.interrupt
+M.pick_kernel = exec.pick_kernel
 
 function M.attach(file_path)
     local buf = vim.api.nvim_get_current_buf()

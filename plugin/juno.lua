@@ -40,6 +40,8 @@ vim.api.nvim_create_user_command("Juno", function(opts)
     require("juno").run(opts.fargs[2])
   elseif sub == "interrupt" then
     require("juno").interrupt()
+  elseif sub == "kernels" then
+    require("juno").pick_kernel()
   elseif sub == "goto" then
     local n = tonumber(opts.fargs[2])
     if n then
@@ -63,7 +65,7 @@ end, {
       return filter({
         "attach", "detach", "next", "prev", "goto", "new",
         "delete", "move", "type", "merge", "split", "clear", "yank", "paste", "run",
-        "interrupt",
+        "interrupt", "kernels",
       })
     end
     if #args == 3 then

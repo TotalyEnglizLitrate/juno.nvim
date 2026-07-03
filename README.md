@@ -136,6 +136,7 @@ All functionality is under the `:Juno` command (with tab-completion):
 | `:Juno paste [above\|below]` | Paste the yanked cell (default: below) |
 | `:Juno run [all]` | Run the current code cell, or every code cell |
 | `:Juno interrupt` | Interrupt the running kernel (stops the in-flight cell) |
+| `:Juno kernels` | Switch the buffer's kernel (re-prompts; outputs are kept) |
 
 ### Keymaps
 

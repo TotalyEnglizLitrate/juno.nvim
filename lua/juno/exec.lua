@@ -201,6 +201,13 @@ local function resolve_kernel(buf, sess, ev)
     local cfg = core.config.execution
     local lang = nbformat.kernel_language(state.data)
 
+    -- Explicit re-pick (:Juno kernels) always shows the picker, ignoring the
+    -- attach/kernel/prompt_for_kernel config that governs first provisioning.
+    if sess.force_prompt then
+        prompt_kernel(buf, sess, ev, lang)
+        return
+    end
+
     if cfg.attach and cfg.attach ~= "" then
         local cf = resolve_attach(cfg.attach, ev.running)
         if cf then
@@ -442,6 +449,26 @@ function exec.run(arg)
     else
         exec.run_current()
     end
+end
+
+-- Re-pick the kernel for a buffer (:Juno kernels): tear down the current kernel
+-- (an owned one is shut down; an attached one is just disconnected) and start a
+-- fresh session that always prompts, so the user can switch to a different
+-- kernelspec, the launch-env kernel, or attach to a running kernel. Existing
+-- cell outputs are left in place; the new kernel starts with fresh state.
+function exec.pick_kernel(buf)
+    buf = buf or vim.api.nvim_get_current_buf()
+    if not gate(buf) then return end
+    local state = core.buf_state[buf]
+    if state.exec then
+        stop_session(state.exec)
+        state.exec = nil
+    end
+    local sess = start_session(buf)
+    if not sess then return end
+    sess.force_prompt = true
+    state.exec = sess
+    send(sess, { op = "discover" })
 end
 
 -- Interrupt the buffer's running kernel (SIGINT for an owned kernel, a
