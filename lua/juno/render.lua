@@ -155,13 +155,13 @@ end
 
 -- Define juno's output highlight groups as overridable links (default = true, so a
 -- user's own definition wins). Re-applied on ColorScheme since a theme switch can
--- clear them. Tune contrast by overriding e.g. JunoOutput / JunoOutputMarker.
+-- clear them. See the README Highlights table for what each group is used for.
 function render.apply_highlights()
     local links = {
-        JunoOutputMarker = "Special",          -- the left rail / output marker
-        JunoOutput       = "Normal",            -- stream (stdout/stderr) text
-        JunoOutputResult = "Normal",            -- execute_result (return value) text
-        JunoOutputError  = "DiagnosticError",   -- errors + tracebacks
+        JunoOutputMarker = "Special",
+        JunoOutput       = "Normal",
+        JunoOutputResult = "Normal",
+        JunoOutputError  = "DiagnosticError",
     }
     for group, link in pairs(links) do
         vim.api.nvim_set_hl(0, group, { link = link, default = true })

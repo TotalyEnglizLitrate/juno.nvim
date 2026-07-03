@@ -41,8 +41,7 @@ writes it back as valid `nbformat` 4.5. It is an **editor**, not a kernel - see
 - `python3` on `$PATH` - **required**. Juno pretty-prints saved notebooks to
   canonical `nbformat` JSON via `python -m json.tool`, and cell execution runs a
   python sidecar. Juno prefers the interpreter nvim was launched with (your
-  project venv/nix-shell), falling back to `vim.g.python3_host_prog`.
-  (Notebook *normalization* is pure Lua and needs no python packages.)
+  project venv/nix-shell) over .
 - `jupyter_client` and `ipykernel` in that environment - required only for cell
   execution (`:Juno run`). Install them where your notebook packages live.
 

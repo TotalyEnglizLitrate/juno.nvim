@@ -126,32 +126,19 @@ function M.detach()
 end
 
 function M.setup(user_config)
+    -- Defaults; see the Configuration section of the README for what each does.
     core.config = vim.tbl_deep_extend("force", {
         otter = { enabled = true, completion = true, diagnostics = true },
-        -- Poll the notebook file and reload it when it changes on disk (e.g. after
-        -- `jupyter run`). Set to false to disable.
         watch = true,
-        -- Left-rail glyph prefixed to every output line (highlight: JunoOutputMarker).
         output_rail = render.OUTPUT_RAIL,
-        -- In-editor cell execution (:Juno run [all]) via the juno_kernel.py sidecar.
         execution = {
             enabled = true,
-            -- Force a specific registered kernelspec by name (skips the prompt).
             kernel = nil,
-            -- Attach to a running kernel by connection-file path or kernel id
-            -- (skips the prompt; wins over `kernel`).
-            attach = nil,
-            -- language -> kernelspec name, used when resolving without a prompt.
+            attach = nil,              -- wins over `kernel` when both are set
             kernel_map = { python = "python3" },
-            -- Prompt (vim.ui.select) for the kernel on first run of a notebook.
             prompt_for_kernel = true,
-            -- Allow the ephemeral launch-env kernel (this interpreter, no
-            -- kernelspec install). Gates it as both a prompt entry and auto path.
             allow_env_kernel = true,
-            -- When permitted and unprompted, default python to the env kernel
-            -- rather than a registered python3 spec.
             prefer_env_python = true,
-            -- Allow attaching to already-running kernels (prompt entries + auto).
             allow_attach = true,
         },
     }, user_config or {})
