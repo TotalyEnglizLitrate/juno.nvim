@@ -21,6 +21,10 @@ writes it back as valid `nbformat` 4.5. It is an **editor**, not a kernel - see
   just work.
 - Cell operations: create, delete, move, change type, merge, split, clear
   outputs, yank/paste.
+- Run cells in-editor (`:Juno run` / `:Juno run all`) against a Jupyter kernel;
+  outputs land in the model, render inline, and persist on `:w`. Start a kernel
+  in your launch environment, pick from installed kernelspecs, or attach to an
+  already-running kernel.
 - Stable per-cell ids and non-destructive `nbformat` normalization on load.
 - New/empty `.ipynb` files are seeded with a base notebook.
 - Watches the file on disk and reloads on external changes (e.g. after running
@@ -34,8 +38,13 @@ writes it back as valid `nbformat` 4.5. It is an **editor**, not a kernel - see
   for the display (fences, headings, conceal).
 - [otter.nvim](https://github.com/jmbuhr/otter.nvim) - optional, required only
   for the in-cell LSP features.
-- `python3` on `$PATH` - optional; used only to pretty-print the saved JSON.
-  Without it, notebooks still save as valid (compact) JSON.
+- `python3` on `$PATH` - **required**. Juno pretty-prints saved notebooks to
+  canonical `nbformat` JSON via `python -m json.tool`, and cell execution runs a
+  python sidecar. Juno prefers the interpreter nvim was launched with (your
+  project venv/nix-shell), falling back to `vim.g.python3_host_prog`.
+  (Notebook *normalization* is pure Lua and needs no python packages.)
+- `jupyter_client` and `ipykernel` in that environment - required only for cell
+  execution (`:Juno run`). Install them where your notebook packages live.
 
 ## Installation
 
@@ -87,6 +96,17 @@ require("juno").setup({
   watch = true,
   -- Left-rail glyph prefixed to every output line (highlight: JunoOutputMarker).
   output_rail = "▎ ",
+  -- In-editor cell execution (:Juno run [all]) via the juno_kernel.py sidecar.
+  execution = {
+    enabled = true,
+    kernel = nil,              -- force a registered kernelspec by name (skips prompt)
+    attach = nil,              -- attach by connection-file path or kernel id (skips prompt)
+    kernel_map = { python = "python3" }, -- language -> kernelspec, used when not prompting
+    prompt_for_kernel = true,  -- vim.ui.select the kernel on first run
+    allow_env_kernel = true,   -- allow the ephemeral launch-env kernel (no kernelspec install)
+    prefer_env_python = true,  -- default python to the env kernel when not prompting
+    allow_attach = true,       -- allow attaching to already-running kernels
+  },
 })
 ```
 
@@ -114,6 +134,7 @@ All functionality is under the `:Juno` command (with tab-completion):
 | `:Juno clear [all]` | Clear outputs of the current cell, or of all cells |
 | `:Juno yank` | Copy the current cell to Juno's cell clipboard |
 | `:Juno paste [above\|below]` | Paste the yanked cell (default: below) |
+| `:Juno run [all]` | Run the current code cell, or every code cell |
 
 ### Keymaps
 
@@ -170,14 +191,31 @@ vim.api.nvim_set_hl(0, "JunoOutputMarker", { fg = "#89b4fa" })
 
 ## Running notebooks
 
-Juno does not run kernels yet. It renders whatever outputs are stored in the
-file. To execute a notebook, use the standard Jupyter tools and let Juno's file
-watcher pick up the results:
+Juno runs cells against a Jupyter kernel through a small python sidecar
+(`python/juno_kernel.py`) that it spawns with your launch-environment
+interpreter. Put the cursor in a code cell and:
 
-```sh
-jupyter nbconvert --to notebook --execute --inplace notebook.ipynb
-# or
-jupyter execute notebook.ipynb
-```
+- `:Juno run` - run the current code cell
+- `:Juno run all` - run every code cell in order
 
-In-editor execution is planned.
+Outputs (stdout/stderr, results, errors) are captured into the notebook model,
+render inline like any stored output, and persist on `:w`.
+
+On the first run in a notebook Juno prompts (`vim.ui.select`) for a kernel:
+
+- **Launch env** - start a fresh kernel using the interpreter nvim was launched
+  with (no kernelspec install needed); requires `ipykernel` in that environment.
+  Listed first for python, so a bare `<Enter>` accepts it.
+- **A registered kernelspec** - any kernel from `jupyter kernelspec list`.
+- **Attach** - connect to an already-running kernel (e.g. a `jupyter console` or
+  server), sharing its live variables. Juno never shuts down a kernel it
+  attached to.
+
+Configure this via the `execution` table (see [Configuration](#configuration)):
+set `kernel`/`attach` to skip the prompt, `prompt_for_kernel = false` to always
+use the launch-env kernel, or `allow_env_kernel = false` to require a registered
+kernelspec.
+
+Requires `jupyter_client` and `ipykernel` in the launch environment. You can
+still execute a notebook out-of-editor and let Juno's file watcher pick up the
+results (`jupyter nbconvert --to notebook --execute --inplace notebook.ipynb`).

@@ -36,6 +36,8 @@ vim.api.nvim_create_user_command("Juno", function(opts)
     require("juno").yank_cell()
   elseif sub == "paste" then
     require("juno").paste_cell(opts.fargs[2])
+  elseif sub == "run" then
+    require("juno").run(opts.fargs[2])
   elseif sub == "goto" then
     local n = tonumber(opts.fargs[2])
     if n then
@@ -58,7 +60,7 @@ end, {
     if #args == 2 then
       return filter({
         "attach", "detach", "next", "prev", "goto", "new",
-        "delete", "move", "type", "merge", "split", "clear", "yank", "paste",
+        "delete", "move", "type", "merge", "split", "clear", "yank", "paste", "run",
       })
     end
     if #args == 3 then
@@ -69,6 +71,7 @@ end, {
         merge = { "up", "down" },
         clear = { "all" },
         paste = { "above", "below" },
+        run = { "all" },
       })[args[2]]
       if second then return filter(second) end
     end

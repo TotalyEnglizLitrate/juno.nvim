@@ -7,6 +7,7 @@ local lsp = require("juno.lsp")
 local persist = require("juno.persist")
 local watch = require("juno.watch")
 local cells = require("juno.cells")
+local exec = require("juno.exec")
 
 local M = {}
 
@@ -38,6 +39,9 @@ M.clear_outputs     = cells.clear_outputs
 M.clear_all_outputs = cells.clear_all_outputs
 M.yank_cell         = cells.yank_cell
 M.paste_cell        = cells.paste_cell
+
+-- Cell execution: run the current cell, or "all" to run every code cell.
+M.run = exec.run
 
 function M.attach(file_path)
     local buf = vim.api.nvim_get_current_buf()
@@ -127,6 +131,27 @@ function M.setup(user_config)
         watch = true,
         -- Left-rail glyph prefixed to every output line (highlight: JunoOutputMarker).
         output_rail = render.OUTPUT_RAIL,
+        -- In-editor cell execution (:Juno run [all]) via the juno_kernel.py sidecar.
+        execution = {
+            enabled = true,
+            -- Force a specific registered kernelspec by name (skips the prompt).
+            kernel = nil,
+            -- Attach to a running kernel by connection-file path or kernel id
+            -- (skips the prompt; wins over `kernel`).
+            attach = nil,
+            -- language -> kernelspec name, used when resolving without a prompt.
+            kernel_map = { python = "python3" },
+            -- Prompt (vim.ui.select) for the kernel on first run of a notebook.
+            prompt_for_kernel = true,
+            -- Allow the ephemeral launch-env kernel (this interpreter, no
+            -- kernelspec install). Gates it as both a prompt entry and auto path.
+            allow_env_kernel = true,
+            -- When permitted and unprompted, default python to the env kernel
+            -- rather than a registered python3 spec.
+            prefer_env_python = true,
+            -- Allow attaching to already-running kernels (prompt entries + auto).
+            allow_attach = true,
+        },
     }, user_config or {})
     M.config = core.config  -- keep the compat alias pointing at the merged config
 
@@ -136,6 +161,17 @@ function M.setup(user_config)
         vim.notify(
             "Juno: render-markdown.nvim is required but was not found. "
                 .. "Install MeanderingProgrammer/render-markdown.nvim.",
+            vim.log.levels.ERROR
+        )
+    end
+
+    -- python3 is a hard dependency: saves are pretty-printed to canonical
+    -- nbformat JSON via `python -m json.tool`, and cell execution runs a python
+    -- sidecar. (Notebook normalization itself is pure Lua — see juno.nbformat.)
+    if vim.fn.executable("python3") ~= 1 and vim.fn.executable("python") ~= 1 then
+        vim.notify(
+            "Juno: python3 is required but was not found on $PATH. "
+                .. "Install python3 (or set vim.g.python3_host_prog).",
             vim.log.levels.ERROR
         )
     end
