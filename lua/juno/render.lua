@@ -11,20 +11,34 @@ local render = {}
 -- source) while leaving the text itself in a high-contrast group. The glyph is
 -- configurable via config.output_rail; this is the default.
 render.OUTPUT_RAIL = "▎ "
-
 -- Render a mime bundle (execute_result/display_data `data`) as output lines.
--- Terminals only show text, so prefer a text representation; when the bundle is
--- rich-only (image/*, html-only, ...) fall back to a marker naming the mimes so
--- the output isn't silently blank. Inline image/png rendering is a planned
--- follow-up (image.nvim).
+--
+-- Priority: text/markdown (produced by the sidecar's markdownify pass or
+-- already present in the notebook) → text/plain → mime-type marker.
+-- The sidecar's augment_html converts text/html to text/markdown at execution
+-- time; notebooks opened from disk that only carry text/html will show the
+-- plain-text fallback (or the mime marker when that is absent too).
+-- Inline image/png rendering is a planned follow-up (image.nvim).
 local function push_data_bundle(push, data)
-    local text = data["text/plain"] or data["text/markdown"]
-    if text then
-        for _, line in ipairs(util.clean_lines(util.get_cell_content(text))) do
+    -- 1. Prefer the markdown rendering (produced by the sidecar's augment_html
+    --    or already present in the notebook).
+    local md = data["text/markdown"]
+    if md then
+        for _, line in ipairs(util.clean_lines(util.get_cell_content(md))) do
             push(line, "JunoOutputResult")
         end
         return
     end
+    -- 2. Fall back to text/plain.
+    local plain = data["text/plain"]
+    if plain then
+        for _, line in ipairs(util.clean_lines(util.get_cell_content(plain))) do
+            push(line, "JunoOutputResult")
+        end
+        return
+    end
+    -- 3. No text representation at all — show the mime types so the user knows
+    --    something was produced.
     local mimes = vim.tbl_keys(data)
     table.sort(mimes)
     if #mimes > 0 then

@@ -42,8 +42,10 @@ writes it back as valid `nbformat` 4.5. It is an **editor**, not a kernel - see
   canonical `nbformat` JSON via `python -m json.tool`, and cell execution runs a
   python sidecar. Juno prefers the interpreter nvim was launched with (your
   project venv/nix-shell) over .
-- `jupyter_client` and `ipykernel` in that environment - required only for cell
-  execution (`:Juno run`). Install them where your notebook packages live.
+- `jupyter_client`, `ipykernel`, and `markdownify` in that environment - required
+  only for cell execution (`:Juno run`). Install them where your notebook packages
+  live. `markdownify` lets the sidecar convert rich `text/html` outputs (e.g.
+  DataFrames) to markdown so they render legibly.
 
 ## Installation
 
@@ -196,14 +198,15 @@ The suite lives in `tests/` and runs in parallel:
 
 ```sh
 tests/run.sh          # unit tests always; execution tests if python can import
-                      # jupyter_client + ipykernel
+                      # jupyter_client + ipykernel + markdownify
 tests/run.sh unit     # only the no-kernel unit tests
 ```
 
 Unit tests (cell-id tracking, structural cell ops, nbformat helpers) need only
 `nvim`. The execution tests (run/interrupt/kernel re-pick) and the Python
-sidecar test need `jupyter_client` and `ipykernel` importable by the `python3`
-on `$PATH`, so run them from a shell where your kernel environment is active.
+sidecar test need `jupyter_client`, `ipykernel`, and `markdownify` importable by
+the `python3` on `$PATH`, so run them from a shell where your kernel environment
+is active.
 
 Each test is an isolated process with its own kernel; test kernels use a private
 Jupyter runtime dir and are cleaned up when the run ends.

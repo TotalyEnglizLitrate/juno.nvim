@@ -41,6 +41,9 @@ try:
     from jupyter_client.kernelspec import KernelSpec, KernelSpecManager
     from jupyter_client.manager import KernelManager
     from jupyter_core.paths import jupyter_runtime_dir
+    # Converts rich text/html outputs (DataFrames, repr HTML) to markdown so the
+    # editor can show readable markdown instead of raw tags.
+    from markdownify import markdownify as html_to_markdown
 except ImportError as exc:  # pragma: no cover - exercised via the Lua gate
     sys.stdout.write(
         json.dumps(
@@ -48,8 +51,8 @@ except ImportError as exc:  # pragma: no cover - exercised via the Lua gate
                 "ev": "fatal",
                 "reason": "missing_dependency",
                 "message": (
-                    "juno: %s. Install jupyter_client and ipykernel in the "
-                    "environment nvim was launched in." % exc
+                    "juno: %s. Install jupyter_client, ipykernel, and markdownify "
+                    "in the environment nvim was launched in." % exc
                 ),
             }
         )
@@ -162,6 +165,33 @@ class Session:
             debug("shutdown error:", exc)
 
 
+def augment_html(data):
+    """Add a text/markdown rendering of a bundle's text/html (unless markdown is
+    already present), so the editor can show readable markdown instead of raw tags.
+    Returns the possibly-augmented bundle; never raises -- a conversion failure just
+    leaves the bundle untouched."""
+    if not isinstance(data, dict) or "text/html" not in data or "text/markdown" in data:
+        return data
+    html = data["text/html"]
+    if isinstance(html, list):
+        html = "".join(html)
+    try:
+        md = html_to_markdown(
+            html,
+            heading_style="ATX",
+            bullets="-",
+            autolinks=False,
+            strip=["img", "style", "script"],
+        ).strip()
+    except Exception:  # noqa: BLE001 - conversion must never break execution
+        return data
+    if not md:
+        return data
+    data = dict(data)
+    data["text/markdown"] = md
+    return data
+
+
 def msg_to_output(msg_type, content):
     """Map a single iopub message to an nbformat 4.5 output dict, or None if the
     message is not itself an output (status, execute_input, ...)."""
@@ -170,12 +200,12 @@ def msg_to_output(msg_type, content):
                 "text": content.get("text", "")}
     if msg_type == "execute_result":
         return {"output_type": "execute_result",
-                "data": content.get("data", {}),
+                "data": augment_html(content.get("data", {})),
                 "metadata": content.get("metadata", {}),
                 "execution_count": content.get("execution_count")}
     if msg_type == "display_data":
         return {"output_type": "display_data",
-                "data": content.get("data", {}),
+                "data": augment_html(content.get("data", {})),
                 "metadata": content.get("metadata", {})}
     if msg_type == "error":
         return {"output_type": "error",

@@ -129,8 +129,113 @@ def test_attach():
     finally:
         km.shutdown_kernel(now=True)
 
+# ---------------------------------------------------------------------------
+# augment_html: unit-level tests (import the function directly)
+# ---------------------------------------------------------------------------
 
+# The sidecar script lives next to this test; add its directory so we can import
+# the augment_html helper without spawning a process.
+import importlib.util
+_spec = importlib.util.spec_from_file_location("juno_kernel", SIDECAR)
+_mod = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+augment_html = _mod.augment_html
+
+
+def test_augment_html():
+    # 1. Skips non-dict input.
+    check(augment_html("not a dict") == "not a dict",
+          "augment_html passes through non-dict")
+
+    # 2. Skips bundles without text/html.
+    plain_only = {"text/plain": "42"}
+    check(augment_html(plain_only) is plain_only,
+          "augment_html skips bundles without text/html")
+
+    # 3. Skips when text/markdown is already present.
+    already_md = {"text/html": "<b>hi</b>", "text/markdown": "**hi**"}
+    check(augment_html(already_md) is already_md,
+          "augment_html skips when text/markdown already present")
+
+    # 4. Converts simple HTML to markdown.
+    simple = {"text/html": "<b>bold</b> and <em>italic</em>", "text/plain": "bold and italic"}
+    result = augment_html(simple)
+    check("text/markdown" in result,
+          "augment_html adds text/markdown for simple HTML")
+    check("bold" in result.get("text/markdown", ""),
+          "augment_html markdown contains 'bold'")
+    # Original bundle must not be mutated.
+    check("text/markdown" not in simple,
+          "augment_html does not mutate original bundle")
+
+    # 5. Handles list-form HTML (nbformat stores source as list of strings).
+    list_html = {"text/html": ["<p>line1</p>", "<p>line2</p>"]}
+    result2 = augment_html(list_html)
+    check("text/markdown" in result2,
+          "augment_html handles list-form text/html")
+
+    # 6. Converts a table.
+    table_html = {
+        "text/html": "<table><tr><th>A</th><th>B</th></tr>"
+                     "<tr><td>1</td><td>2</td></tr></table>",
+    }
+    result3 = augment_html(table_html)
+    check("text/markdown" in result3,
+          "augment_html converts HTML table")
+    md3 = result3.get("text/markdown", "")
+    check("A" in md3 and "B" in md3,
+          "augment_html table markdown contains headers")
+
+    # 7. Empty HTML produces no markdown key.
+    empty = {"text/html": "   "}
+    check("text/markdown" not in augment_html(empty),
+          "augment_html skips empty/whitespace HTML")
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: HTML display_data goes through the sidecar with text/markdown
+# ---------------------------------------------------------------------------
+
+def test_html_display():
+    proc = spawn()
+    send, wait, outputs = make_client(proc)
+
+    send({"op": "start", "env_python": True})
+    check(wait("ready", timeout=60), "html_display: kernel became ready")
+
+    # Execute code that produces display_data with text/html.
+    code = (
+        "from IPython.display import display, HTML\n"
+        "display(HTML('<b>hello</b> world'))"
+    )
+    send({"op": "execute", "cell_id": "h1", "code": code})
+    d = wait("done", "h1")
+    check(d is not None and d["success"], "html_display: cell finished successfully")
+
+    oh = outputs("h1")
+    # Find the display_data output (there may be a stream output too).
+    dd = [o for o in oh if o["output"]["output_type"] == "display_data"]
+    check(len(dd) > 0, "html_display: got a display_data output")
+    if dd:
+        data = dd[0]["output"]["data"]
+        check("text/html" in data,
+              "html_display: output has text/html")
+        check("text/markdown" in data,
+              "html_display: sidecar augmented with text/markdown")
+        md = data.get("text/markdown", "")
+        check("hello" in md,
+              "html_display: markdown contains 'hello'")
+
+    send({"op": "shutdown"})
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+
+test_augment_html()
 test_owned()
+test_html_display()
 test_attach()
 
 if fails:

@@ -3,15 +3,15 @@
 # juno.nvim test runner.
 #
 #   tests/run.sh              # unit tests always; exec/sidecar tests if the
-#                             # current python has jupyter_client + ipykernel
+#                             # current python has jupyter_client + ipykernel + markdownify
 #   tests/run.sh unit         # only the no-kernel unit tests
 #
 # Tests run in parallel. Each one is a separate headless-nvim (or python) process
 # with its own kernel (env-python kernels have their own connection file), so
 # they never share kernel state. To include the execution tests, run inside an
-# environment whose python can import jupyter_client and ipykernel, e.g.:
+# environment whose python can import jupyter_client, ipykernel, and markdownify, e.g.:
 #
-#   nix-shell -p "python3.withPackages (p: with p; [jupyter jupyter-client ipykernel])" \
+#   nix-shell -p "python3.withPackages (p: with p; [jupyter jupyter-client ipykernel markdownify])" \
 #     --run tests/run.sh
 #
 set -u
@@ -88,7 +88,7 @@ done
 
 if [ "$ONLY" != "unit" ] && [ "$exec_enabled" = "0" ]; then
     section "execution (skipped)"
-    echo "  $(python_bin) cannot import jupyter_client/ipykernel; run inside your kernel env to include exec tests."
+    echo "  $(python_bin) cannot import jupyter_client/ipykernel/markdownify; run inside your kernel env to include exec tests."
 fi
 
 section "summary"

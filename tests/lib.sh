@@ -11,7 +11,7 @@ require_nvim() {
 # (e.g. a nix-shell or venv with jupyter_client + ipykernel) to include them.
 have_jupyter() {
     local py; py="$(python_bin)" || return 1
-    "$py" -c 'import jupyter_client, ipykernel' >/dev/null 2>&1
+    "$py" -c 'import jupyter_client, ipykernel, markdownify' >/dev/null 2>&1
 }
 
 section() { printf '\n=== %s ===\n' "$1"; }
