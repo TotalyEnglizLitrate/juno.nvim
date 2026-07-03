@@ -29,6 +29,7 @@ All output dicts are ready-made nbformat 4.5 outputs, so juno stores them verbat
 import glob
 import json
 import os
+import re
 import queue
 import sys
 import threading
@@ -176,12 +177,18 @@ def augment_html(data):
     if isinstance(html, list):
         html = "".join(html)
     try:
+        # Remove <style>, <script>, and <img> blocks entirely before markdownify
+        # sees them. markdownify's own `strip` option only removes the tag wrapper
+        # and renders children as text, which leaks CSS rules into the output.
+
+        html = re.sub(r"<style[^>]*>.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE)
+        html = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE)
+        html = re.sub(r"<img[^>]*>", "", html, flags=re.IGNORECASE)
         md = html_to_markdown(
             html,
             heading_style="ATX",
             bullets="-",
             autolinks=False,
-            strip=["img", "style", "script"],
         ).strip()
     except Exception:  # noqa: BLE001 - conversion must never break execution
         return data
