@@ -72,9 +72,13 @@ local function output_to_lines(output, cell_num)
         out_details = ":" .. (mime or "")
     elseif output.output_type == "error" then
         push("```text", "JunoOutputError")
-        push("Error: " .. (output.evalue or "unknown"), "JunoOutputError")
+        for _, e_line in ipairs(util.clean_lines("Error: " .. (output.evalue or "unknown"))) do
+            push(e_line, "JunoOutputError")
+        end
         for _, tb in ipairs(output.traceback or {}) do
-            push(tb:gsub("\27%[[%d;]*m", ""), "JunoOutputError")
+            for _, tb_line in ipairs(util.clean_lines(tb:gsub("\27%[[%d;]*m", ""))) do
+                push(tb_line, "JunoOutputError")
+            end
         end
         push("```", "JunoOutputError")
     end
