@@ -62,6 +62,23 @@ function nb.make_cell(cell_type, id)
     return { id = id, cell_type = cell_type, metadata = vim.empty_dict(), source = {} }
 end
 
+-- The cell in `cells` with the given stable nbformat id, or nil. This is the
+-- identity lookup that pairs with the positional `cells[i]` access.
+function nb.cell_by_id(cells, id)
+    for _, cell in ipairs(cells or {}) do
+        if cell.id == id then return cell end
+    end
+    return nil
+end
+
+-- The 1-based position of the cell with the given nbformat id, or nil.
+function nb.index_by_id(cells, id)
+    for i, cell in ipairs(cells or {}) do
+        if cell.id == id then return i end
+    end
+    return nil
+end
+
 -- The declared kernel language, or nil if the notebook doesn't specify one.
 function nb.declared_language(data)
     local m = data.metadata

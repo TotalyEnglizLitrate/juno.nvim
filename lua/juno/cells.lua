@@ -34,6 +34,21 @@ function cells.current_cell(buf)
     return nil
 end
 
+-- The stable nbformat id of the cell at 1-based position n (its cell number),
+-- or nil. Bridges a displayed cell number to the tracking identity.
+function cells.id_at(buf, n)
+    local state = core.buf_state[buf]
+    local cell = state and state.data.cells[n]
+    return cell and cell.id or nil
+end
+
+-- The 1-based position of the cell with the given nbformat id, or nil. The
+-- inverse of id_at, for turning a tracked identity back into a list index.
+function cells.index_of(buf, id)
+    local state = core.buf_state[buf]
+    return state and nbformat.index_by_id(state.data.cells, id) or nil
+end
+
 -- Jump to the nth cell (1-indexed).
 function cells.goto_cell(n)
     local buf = vim.api.nvim_get_current_buf()

@@ -45,13 +45,6 @@ local function send(sess, obj)
     end
 end
 
-local function find_cell_by_id(state, id)
-    for _, c in ipairs(state.data.cells or {}) do
-        if c.id == id then return c end
-    end
-    return nil
-end
-
 -- Shut a session's kernel down and close its handles. Captures the session
 -- directly (not via buf_state) so teardown works even after the buffer's own
 -- BufWipeout handler has cleared buf_state.
@@ -73,7 +66,7 @@ end
 local function apply_output(buf, cell_id, output)
     local state = core.buf_state[buf]
     if not state or not vim.api.nvim_buf_is_valid(buf) then return end
-    local cell = find_cell_by_id(state, cell_id)
+    local cell = nbformat.cell_by_id(state.data.cells, cell_id)
     if not cell then return end
     persist.sync_buffer(buf)  -- capture in-progress edits before we rewrite the buffer
     cell.outputs = cell.outputs or {}
@@ -85,7 +78,7 @@ end
 local function apply_done(buf, cell_id, execution_count)
     local state = core.buf_state[buf]
     if not state or not vim.api.nvim_buf_is_valid(buf) then return end
-    local cell = find_cell_by_id(state, cell_id)
+    local cell = nbformat.cell_by_id(state.data.cells, cell_id)
     if not cell then return end
     persist.sync_buffer(buf)
     if execution_count == nil or execution_count == vim.NIL then
@@ -383,7 +376,7 @@ end
 local function submit(buf, nb_id, code, done_cb)
     local state = core.buf_state[buf]
     local sess = state.exec
-    local cell = find_cell_by_id(state, nb_id)
+    local cell = nbformat.cell_by_id(state.data.cells, nb_id)
     if cell then
         cell.outputs = {}
         cell.execution_count = vim.NIL
@@ -405,7 +398,7 @@ function exec.run_current(buf)
         return
     end
     local nb_id = cur.id  -- stable nbformat cell id
-    local cell = find_cell_by_id(state, nb_id)
+    local cell = nbformat.cell_by_id(state.data.cells, nb_id)
     local code = cell and util.get_cell_content(cell.source) or ""
     ensure_kernel(buf, function()
         submit(buf, nb_id, code)
@@ -434,7 +427,7 @@ function exec.run_all(buf)
                 notify("ran " .. #ids .. " code cell(s).")
                 return
             end
-            local cell = find_cell_by_id(state, id)
+            local cell = nbformat.cell_by_id(state.data.cells, id)
             local code = cell and util.get_cell_content(cell.source) or ""
             submit(buf, id, code, function() step() end)
         end
