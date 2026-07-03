@@ -12,6 +12,26 @@ local render = {}
 -- configurable via config.output_rail; this is the default.
 render.OUTPUT_RAIL = "▎ "
 
+-- Render a mime bundle (execute_result/display_data `data`) as output lines.
+-- Terminals only show text, so prefer a text representation; when the bundle is
+-- rich-only (image/*, html-only, ...) fall back to a marker naming the mimes so
+-- the output isn't silently blank. Inline image/png rendering is a planned
+-- follow-up (image.nvim).
+local function push_data_bundle(push, data)
+    local text = data["text/plain"] or data["text/markdown"]
+    if text then
+        for _, line in ipairs(util.clean_lines(util.get_cell_content(text))) do
+            push(line, "JunoOutputResult")
+        end
+        return
+    end
+    local mimes = vim.tbl_keys(data)
+    table.sort(mimes)
+    if #mimes > 0 then
+        push("[" .. table.concat(mimes, ", ") .. "]", "JunoOutput")
+    end
+end
+
 local function output_to_virt_lines(output)
     local vlines = {}
     local rail = core.config.output_rail or render.OUTPUT_RAIL
@@ -22,10 +42,8 @@ local function output_to_virt_lines(output)
         for _, line in ipairs(util.clean_lines(util.get_cell_content(output.text))) do
             push(line, "JunoOutput")
         end
-    elseif output.output_type == "execute_result" and output.data and output.data["text/plain"] then
-        for _, line in ipairs(util.clean_lines(util.get_cell_content(output.data["text/plain"]))) do
-            push(line, "JunoOutputResult")
-        end
+    elseif output.output_type == "execute_result" or output.output_type == "display_data" then
+        push_data_bundle(push, output.data or {})
     elseif output.output_type == "error" then
         push("Error: " .. (output.evalue or "unknown"), "JunoOutputError", "JunoOutputError")
         for _, tb in ipairs(output.traceback or {}) do
