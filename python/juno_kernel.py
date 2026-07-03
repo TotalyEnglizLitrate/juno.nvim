@@ -187,40 +187,46 @@ def msg_to_output(msg_type, content):
 
 def run_execute(sess, cell_id, code, stop):
     """Submit code and stream outputs until the kernel returns to idle for this
-    request. Emits ev:output per output and a final ev:done."""
+    request. Emits ev:output per output and a final ev:done.
+
+    Both completion signals are awaited: the iopub `idle` status (after which no
+    more outputs arrive) and the shell `execute_reply` (which carries the
+    authoritative execution_count). The reply can lag idle, so we poll both
+    channels rather than giving the reply a single timeout window."""
     kc = sess.kc
     msg_id = kc.execute(code, store_history=True, allow_stdin=False)
     debug("execute", cell_id, "msg_id", msg_id)
 
-    while not stop.is_set():
-        try:
-            msg = kc.get_iopub_msg(timeout=0.1)
-        except queue.Empty:
-            continue
-        if msg.get("parent_header", {}).get("msg_id") != msg_id:
-            continue  # output from someone else on a shared kernel
-        mtype = msg["header"]["msg_type"]
-        content = msg["content"]
-        if mtype == "status":
-            if content.get("execution_state") == "idle":
-                break
-            continue
-        out = msg_to_output(mtype, content)
-        if out is not None:
-            emit({"ev": "output", "cell_id": cell_id, "output": out})
-
-    # The shell reply carries the authoritative execution_count and status.
+    got_idle = False
+    got_reply = False
     execution_count, success = None, True
-    try:
-        while True:
-            reply = kc.get_shell_msg(timeout=0.2)
+
+    while not stop.is_set() and not (got_idle and got_reply):
+        # Drain iopub (outputs + idle) for this request.
+        try:
+            msg = kc.get_iopub_msg(timeout=0.05)
+            if msg.get("parent_header", {}).get("msg_id") == msg_id:
+                mtype = msg["header"]["msg_type"]
+                content = msg["content"]
+                if mtype == "status":
+                    if content.get("execution_state") == "idle":
+                        got_idle = True
+                else:
+                    out = msg_to_output(mtype, content)
+                    if out is not None:
+                        emit({"ev": "output", "cell_id": cell_id, "output": out})
+        except queue.Empty:
+            pass
+        # Pick up the shell reply whenever it lands.
+        try:
+            reply = kc.get_shell_msg(timeout=0.05)
             if reply.get("parent_header", {}).get("msg_id") == msg_id:
                 rc = reply.get("content", {})
                 execution_count = rc.get("execution_count")
                 success = rc.get("status") == "ok"
-                break
-    except queue.Empty:
-        debug("no shell reply for", msg_id)
+                got_reply = True
+        except queue.Empty:
+            pass
 
     emit({"ev": "done", "cell_id": cell_id,
           "execution_count": execution_count, "success": success})
