@@ -35,15 +35,21 @@ local function output_to_virt_lines(output)
     return vlines
 end
 
--- Returns cell positions from ns.src extmarks, sorted by start row.
--- Each entry: { id, start_row, end_row }
+-- Returns cell positions from ns.src extmarks, in document order.
+-- Each entry: { id = <stable nbformat cell id>, mark = <extmark int id>,
+--               start_row, end_row }.
+-- Cells are tracked by their stable string id (via the per-buffer mark registry
+-- render builds), not by list position, so callers survive reordering.
 function render.cell_positions(buf)
+    local state = core.buf_state[buf]
+    local mark_cell = state and state.mark_cell or {}
     local marks = vim.api.nvim_buf_get_extmarks(buf, core.ns.src, 0, -1, { details = true })
     local positions = {}
     for _, mark in ipairs(marks) do
-        -- mark = { id, start_row, start_col, details }
+        -- mark = { extmark_id, start_row, start_col, details }
         table.insert(positions, {
-            id = mark[1],
+            id = mark_cell[mark[1]],
+            mark = mark[1],
             start_row = mark[2],
             end_row = mark[4].end_row,
         })
@@ -51,8 +57,28 @@ function render.cell_positions(buf)
     return positions
 end
 
+-- Stable integer extmark id for a cell's nbformat id, allocated once per cell and
+-- reused across renders so the ns.src/ns.num extmarks keep the same handle as the
+-- cell moves. Also records the reverse (mark -> cell id) that cell_positions reads.
+local function mark_for(state, cell_id)
+    state.mark_ids = state.mark_ids or {}
+    state.mark_seq = state.mark_seq or 0
+    local m = state.mark_ids[cell_id]
+    if not m then
+        state.mark_seq = state.mark_seq + 1
+        m = state.mark_seq
+        state.mark_ids[cell_id] = m
+    end
+    state.mark_cell[m] = cell_id
+    return m
+end
+
 function render.render(buf, data)
     local lang = nbformat.kernel_language(data)
+    local state = core.buf_state[buf]
+    -- Rebuild the mark -> cell-id reverse map each render; mark_ids (cell-id ->
+    -- mark) persists on state so a cell keeps its extmark handle as it moves.
+    if state then state.mark_cell = {} end
     local lines = {}
     local cell_pos = {}
     local idx = 0
@@ -92,16 +118,20 @@ function render.render(buf, data)
 
     for i, cell in ipairs(data.cells or {}) do
         local pos = cell_pos[i]
+        -- Stable per-cell extmark handle (falls back to position if this buffer
+        -- has no state, which shouldn't happen for a rendered notebook). The
+        -- displayed [n] stays positional so cell numbers read 1..N as before.
+        local mark = state and mark_for(state, cell.id) or i
 
         vim.api.nvim_buf_set_extmark(buf, core.ns.num, pos.phantom, 0, {
-            id = i,
+            id = mark,
             virt_text = { { "[" .. i .. "]", "InlayHint" } },
             virt_text_pos = "overlay",
         })
 
         vim.api.nvim_buf_set_extmark(buf, core.ns.src, pos.start, 0, {
             end_row = pos.start + pos.h,
-            id = i,
+            id = mark,
         })
 
         if cell.cell_type == "code" and cell.outputs and #cell.outputs > 0 then

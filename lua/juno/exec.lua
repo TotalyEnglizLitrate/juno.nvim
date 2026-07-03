@@ -404,9 +404,9 @@ function exec.run_current(buf)
         notify("cursor is not in a code cell.", vim.log.levels.WARN)
         return
     end
-    local cell = state.data.cells[cur.id]
-    local nb_id = cell.id
-    local code = util.get_cell_content(cell.source)
+    local nb_id = cur.id  -- stable nbformat cell id
+    local cell = find_cell_by_id(state, nb_id)
+    local code = cell and util.get_cell_content(cell.source) or ""
     ensure_kernel(buf, function()
         submit(buf, nb_id, code)
     end)

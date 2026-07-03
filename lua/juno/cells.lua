@@ -16,16 +16,19 @@ local VALID_CELL_TYPES = { code = true, markdown = true, raw = true }
 local clipboard = nil
 
 -- Returns info about the cell the cursor is currently in, or nil if between cells.
+-- `id` is the stable nbformat cell id (the tracking identity); `idx` is its
+-- current 1-based position in data.cells (for list manipulation only).
 -- { idx, id, type, start_row, end_row }
 function cells.current_cell(buf)
     buf = buf or vim.api.nvim_get_current_buf()
-    if not core.buf_state[buf] then return nil end
+    local state = core.buf_state[buf]
+    if not state then return nil end
     local cursor_row = vim.api.nvim_win_get_cursor(0)[1] - 1
     local positions = render.cell_positions(buf)
     for list_idx, pos in ipairs(positions) do
         if cursor_row >= pos.start_row and cursor_row < pos.end_row then
-            local cell = core.buf_state[buf].data.cells[pos.id]
-            return { idx = list_idx, id = pos.id, type = cell.cell_type, start_row = pos.start_row, end_row = pos.end_row }
+            local cell = state.data.cells[list_idx]
+            return { idx = list_idx, id = cell.id, type = cell.cell_type, start_row = pos.start_row, end_row = pos.end_row }
         end
     end
     return nil
@@ -88,11 +91,12 @@ function cells.prev_cell()
     if prev_pos then vim.api.nvim_win_set_cursor(0, { prev_pos.start_row + 1, 0 }) end
 end
 
--- Place the cursor on the first editable line of the cell with the given data id.
+-- Place the cursor on the first editable line of the cell with the given
+-- nbformat id.
 local function focus_cell(buf, id)
-    for _, pos in ipairs(render.cell_positions(buf)) do
+    for list_idx, pos in ipairs(render.cell_positions(buf)) do
         if pos.id == id then
-            local cell = core.buf_state[buf].data.cells[id]
+            local cell = core.buf_state[buf].data.cells[list_idx]
             local row = pos.start_row + (cell.cell_type == "code" and 1 or 0)
             vim.api.nvim_win_set_cursor(0, { row + 1, 0 })
             return
@@ -126,7 +130,7 @@ function cells.new_cell(opts)
     local current = cells.current_cell(buf)
     local at
     if current then
-        at = current.id + (opts.where == "above" and 0 or 1)
+        at = current.idx + (opts.where == "above" and 0 or 1)
     else
         at = (opts.where == "above") and 1 or (#list + 1)
     end
@@ -137,7 +141,7 @@ function cells.new_cell(opts)
         table.insert(list, at, cell)
         render.render(buf, state.data)
         vim.api.nvim_set_option_value("modified", true, { buf = buf })
-        focus_cell(buf, at)
+        focus_cell(buf, cell.id)
         vim.cmd("startinsert")
 
         -- Re-activate otter when we just established/changed the language so
@@ -179,7 +183,8 @@ end
 
 -- Run a structural edit on the cell under the cursor: syncs buffer edits into the
 -- model, calls fn(cells, current, state) to mutate data.cells, then re-renders and
--- marks the buffer modified. fn returns the cell index to focus afterward (or nil).
+-- marks the buffer modified. fn returns the nbformat id of the cell to focus
+-- afterward (or nil). `current.idx` is the position; `current.id` the identity.
 local function edit_current_cell(fn)
     local buf = vim.api.nvim_get_current_buf()
     local state = core.buf_state[buf]
@@ -202,22 +207,23 @@ end
 -- Delete the cell under the cursor.
 function cells.delete_cell()
     edit_current_cell(function(list, current)
-        table.remove(list, current.id)
-        return math.min(current.id, #list)
+        table.remove(list, current.idx)
+        local focus = math.min(current.idx, #list)
+        return list[focus] and list[focus].id or nil
     end)
 end
 
 -- Move the current cell up (dir = -1) or down (dir = 1), swapping with its neighbor.
 function cells.move_cell(dir)
     edit_current_cell(function(list, current)
-        local i = current.id
+        local i = current.idx
         local j = i + dir
         if j < 1 or j > #list then
             vim.notify("Juno: Cannot move cell further", vim.log.levels.WARN)
-            return i
+            return current.id
         end
         list[i], list[j] = list[j], list[i]
-        return j
+        return current.id  -- the moved cell (now at j) keeps its identity
     end)
 end
 
@@ -229,7 +235,7 @@ function cells.change_cell_type(new_type)
         return
     end
     edit_current_cell(function(list, current)
-        local cell = list[current.id]
+        local cell = list[current.idx]
         new_type = new_type or (cell.cell_type == "code" and "markdown" or "code")
         if cell.cell_type == new_type then return current.id end
         cell.cell_type = new_type
@@ -249,7 +255,7 @@ end
 function cells.merge_cell(dir)
     dir = dir or 1
     edit_current_cell(function(list, current)
-        local upper = (dir < 0) and (current.id - 1) or current.id
+        local upper = (dir < 0) and (current.idx - 1) or current.idx
         local lower = upper + 1
         if upper < 1 or lower > #list then
             vim.notify("Juno: No adjacent cell to merge with", vim.log.levels.WARN)
@@ -260,8 +266,9 @@ function cells.merge_cell(dir)
         local merged = top .. util.get_cell_content(list[lower].source)
         list[upper].source = util.lines_to_source(vim.split(merged, "\n"))
         clear_cell_outputs(list[upper])
+        local survivor = list[upper].id
         table.remove(list, lower)
-        return upper
+        return survivor
     end)
 end
 
@@ -269,7 +276,7 @@ end
 function cells.split_cell()
     local cursor_row = vim.api.nvim_win_get_cursor(0)[1] - 1
     edit_current_cell(function(list, current)
-        local cell = list[current.id]
+        local cell = list[current.idx]
         local src = util.clean_lines(util.get_cell_content(cell.source))
         -- Buffer row of the cell's first source line (code cells open with a fence).
         local first = current.start_row + (cell.cell_type == "code" and 1 or 0)
@@ -284,15 +291,15 @@ function cells.split_cell()
 
         local new_cell = nbformat.make_cell(cell.cell_type, nbformat.gen_id(nbformat.taken_ids(list)))
         new_cell.source = util.lines_to_source(bottom)
-        table.insert(list, current.id + 1, new_cell)
-        return current.id + 1
+        table.insert(list, current.idx + 1, new_cell)
+        return new_cell.id
     end)
 end
 
 -- Clear outputs of the current cell.
 function cells.clear_outputs()
     edit_current_cell(function(list, current)
-        clear_cell_outputs(list[current.id])
+        clear_cell_outputs(list[current.idx])
         return current.id
     end)
 end
@@ -327,7 +334,7 @@ function cells.yank_cell()
         vim.notify("Juno: Cursor is not in a cell", vim.log.levels.WARN)
         return
     end
-    clipboard = vim.deepcopy(state.data.cells[current.id])
+    clipboard = vim.deepcopy(state.data.cells[current.idx])
     vim.notify("Juno: cell yanked", vim.log.levels.INFO)
 end
 
@@ -349,7 +356,7 @@ function cells.paste_cell(where)
     local current = cells.current_cell(buf)
     local at
     if current then
-        at = current.id + (where == "above" and 0 or 1)
+        at = current.idx + (where == "above" and 0 or 1)
     else
         at = (where == "above") and 1 or (#list + 1)
     end
@@ -363,7 +370,7 @@ function cells.paste_cell(where)
     table.insert(list, at, cell)
     render.render(buf, state.data)
     vim.api.nvim_set_option_value("modified", true, { buf = buf })
-    focus_cell(buf, at)
+    focus_cell(buf, cell.id)
 end
 
 return cells

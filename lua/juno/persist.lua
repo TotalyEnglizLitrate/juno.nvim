@@ -14,8 +14,12 @@ function persist.sync_buffer(buf)
     local state = core.buf_state[buf]
     if not state then return end
 
-    for i, cell in ipairs(state.data.cells or {}) do
-        local mark = vim.api.nvim_buf_get_extmark_by_id(buf, core.ns.src, i, { details = true })
+    for _, cell in ipairs(state.data.cells or {}) do
+        -- Look up the cell's source region by its stable extmark handle (keyed on
+        -- the nbformat cell id via the render registry), not by list position.
+        local mark_id = state.mark_ids and state.mark_ids[cell.id]
+        local mark = mark_id
+            and vim.api.nvim_buf_get_extmark_by_id(buf, core.ns.src, mark_id, { details = true })
         if mark and #mark > 0 then
             local start_row = mark[1]
             local end_row = mark[3].end_row
