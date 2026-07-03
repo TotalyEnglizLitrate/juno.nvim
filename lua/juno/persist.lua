@@ -46,6 +46,10 @@ local function find_python()
     return nil
 end
 
+-- Exposed so the execution sidecar (juno.exec) spawns the same launch-env
+-- interpreter used for json.tool, keeping env resolution in one place.
+persist.find_python = find_python
+
 -- Pretty-print JSON via python's json.tool for Jupyter-compatible formatting.
 -- Falls back to the (compact but valid) input if python is missing or errors,
 -- warning the user that the notebook was saved without pretty formatting.
