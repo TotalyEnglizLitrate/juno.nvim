@@ -191,6 +191,24 @@ vim.api.nvim_set_hl(0, "JunoOutput", { link = "Comment" })
 vim.api.nvim_set_hl(0, "JunoOutputMarker", { fg = "#89b4fa" })
 ```
 
+## Tests
+
+The suite lives in `tests/` and runs in parallel:
+
+```sh
+tests/run.sh          # unit tests always; execution tests if python can import
+                      # jupyter_client + ipykernel
+tests/run.sh unit     # only the no-kernel unit tests
+```
+
+Unit tests (cell-id tracking, structural cell ops, nbformat helpers) need only
+`nvim`. The execution tests (run/interrupt/kernel re-pick) and the Python
+sidecar test need `jupyter_client` and `ipykernel` importable by the `python3`
+on `$PATH`, so run them from a shell where your kernel environment is active.
+
+Each test is an isolated process with its own kernel; test kernels use a private
+Jupyter runtime dir and are cleaned up when the run ends.
+
 ## Running notebooks
 
 Juno runs cells against a Jupyter kernel through a small python sidecar
