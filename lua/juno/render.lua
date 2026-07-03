@@ -46,11 +46,10 @@ local function push_data_bundle(push, data)
     end
 end
 
-local function output_to_virt_lines(output)
-    local vlines = {}
-    local rail = core.config.output_rail or render.OUTPUT_RAIL
+local function output_to_lines(output)
+    local lines = {}
     local function push(text, text_hl, rail_hl)
-        table.insert(vlines, { { rail, rail_hl or "JunoOutputMarker" }, { text, text_hl } })
+        table.insert(lines, { text = text, text_hl = text_hl, rail_hl = rail_hl or "JunoOutputMarker" })
     end
     if output.output_type == "stream" then
         for _, line in ipairs(util.clean_lines(util.get_cell_content(output.text))) do
@@ -64,7 +63,7 @@ local function output_to_virt_lines(output)
             push(tb:gsub("\27%[[%d;]*m", ""), "JunoOutputError", "JunoOutputError")
         end
     end
-    return vlines
+    return lines
 end
 
 -- Returns cell positions from ns.src extmarks, in document order.
@@ -135,9 +134,20 @@ function render.render(buf, data)
             h = #src
         end
 
+        local out_objs = {}
+        if cell.cell_type == "code" and cell.outputs and #cell.outputs > 0 then
+            for _, out in ipairs(cell.outputs) do
+                vim.list_extend(out_objs, output_to_lines(out))
+            end
+            for _, obj in ipairs(out_objs) do
+                table.insert(lines, obj.text)
+            end
+        end
+
         table.insert(lines, "")
-        idx = idx + 1 + h + 1
-        cell_pos[i] = { start = start, h = h, phantom = phantom_row }
+        local out_h = #out_objs
+        idx = idx + 1 + h + out_h + 1
+        cell_pos[i] = { start = start, h = h, out_objs = out_objs, phantom = phantom_row }
     end
 
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
@@ -166,20 +176,26 @@ function render.render(buf, data)
             id = mark,
         })
 
-        if cell.cell_type == "code" and cell.outputs and #cell.outputs > 0 then
-            local vlines = {}
-            for _, out in ipairs(cell.outputs) do
-                vim.list_extend(vlines, output_to_virt_lines(out))
-            end
-            if #vlines > 0 then
-                -- Anchor to the trailing spacer (a real blank line), not the
-                -- closing ``` fence: markdown treesitter conceals fence lines
-                -- with `conceal_lines`, which collapses the line and takes any
-                -- attached virt_lines with it whenever conceallevel > 0.
-                vim.api.nvim_buf_set_extmark(buf, core.ns.out, pos.start + pos.h, 0, {
-                    virt_lines = vlines,
-                    virt_lines_above = true,
-                })
+        if cell.cell_type == "code" and #pos.out_objs > 0 then
+            local out_start = pos.start + pos.h
+            local rail = core.config.output_rail or render.OUTPUT_RAIL
+            for offset, obj in ipairs(pos.out_objs) do
+                local cur_row = out_start + offset - 1
+                -- Apply text highlight
+                if obj.text_hl then
+                    vim.api.nvim_buf_set_extmark(buf, core.ns.out, cur_row, 0, {
+                        end_row = cur_row,
+                        end_col = #obj.text,
+                        hl_group = obj.text_hl,
+                    })
+                end
+                -- Apply rail
+                if rail and rail ~= "" then
+                    vim.api.nvim_buf_set_extmark(buf, core.ns.out, cur_row, 0, {
+                        virt_text = { { rail, obj.rail_hl } },
+                        virt_text_pos = "inline",
+                    })
+                end
             end
         end
     end
