@@ -23,7 +23,7 @@ local function push_data_bundle(push, data)
         for _, line in ipairs(util.clean_lines(util.get_cell_content(md))) do
             push(line, "JunoOutputResult")
         end
-        return
+        return "text/markdown"
     end
     -- 2. Fall back to text/plain.
     local plain = data["text/plain"]
@@ -33,7 +33,7 @@ local function push_data_bundle(push, data)
             push(line, "JunoOutputResult")
         end
         push("```", "JunoOutputResult")
-        return
+        return "text/plain"
     end
     -- 3. No text representation at all — show the mime types so the user knows
     --    something was produced.
@@ -43,22 +43,33 @@ local function push_data_bundle(push, data)
         push("```text", "JunoOutput")
         push("[" .. table.concat(mimes, ", ") .. "]", "JunoOutput")
         push("```", "JunoOutput")
+        return "mimes"
     end
+    return "empty"
 end
 
-local function output_to_lines(output)
+local function output_to_lines(output, cell_num)
     local lines = {}
     local function push(text, text_hl)
         table.insert(lines, { text = text, text_hl = text_hl })
     end
+    
+    local header_idx = #lines + 1
+    table.insert(lines, { text = "", is_header = true, label = "" })
+    
+    local out_type = output.output_type
+    local out_details = ""
+    
     if output.output_type == "stream" then
+        out_details = ":" .. (output.name or "stdout")
         push("```text", "JunoOutput")
         for _, line in ipairs(util.clean_lines(util.get_cell_content(output.text))) do
             push(line, "JunoOutput")
         end
         push("```", "JunoOutput")
     elseif output.output_type == "execute_result" or output.output_type == "display_data" then
-        push_data_bundle(push, output.data or {})
+        local mime = push_data_bundle(push, output.data or {})
+        out_details = ":" .. (mime or "")
     elseif output.output_type == "error" then
         push("```text", "JunoOutputError")
         push("Error: " .. (output.evalue or "unknown"), "JunoOutputError")
@@ -67,6 +78,9 @@ local function output_to_lines(output)
         end
         push("```", "JunoOutputError")
     end
+    
+    lines[header_idx].label = string.format("[%d:output:%s%s]", cell_num, out_type, out_details)
+    
     return lines
 end
 
@@ -141,7 +155,7 @@ function render.render(buf, data)
         local out_objs = {}
         if cell.cell_type == "code" and cell.outputs and #cell.outputs > 0 then
             for _, out in ipairs(cell.outputs) do
-                vim.list_extend(out_objs, output_to_lines(out))
+                vim.list_extend(out_objs, output_to_lines(out, i))
             end
             for _, obj in ipairs(out_objs) do
                 table.insert(lines, obj.text)
@@ -184,8 +198,12 @@ function render.render(buf, data)
             local out_start = pos.start + pos.h
             for offset, obj in ipairs(pos.out_objs) do
                 local cur_row = out_start + offset - 1
-                -- Apply text highlight
-                if obj.text_hl then
+                if obj.is_header then
+                    vim.api.nvim_buf_set_extmark(buf, core.ns.num, cur_row, 0, {
+                        virt_text = { { obj.label, "InlayHint" } },
+                        virt_text_pos = "overlay",
+                    })
+                elseif obj.text_hl then
                     vim.api.nvim_buf_set_extmark(buf, core.ns.out, cur_row, 0, {
                         end_row = cur_row,
                         end_col = #obj.text,
