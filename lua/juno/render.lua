@@ -7,10 +7,6 @@ local nbformat = require("juno.nbformat")
 
 local render = {}
 
--- A left rail on every output line marks the block as output (distinct from
--- source) while leaving the text itself in a high-contrast group. The glyph is
--- configurable via config.output_rail; this is the default.
-render.OUTPUT_RAIL = "▎ "
 -- Render a mime bundle (execute_result/display_data `data`) as output lines.
 --
 -- Priority: text/markdown (produced by the sidecar's markdownify pass or
@@ -32,9 +28,11 @@ local function push_data_bundle(push, data)
     -- 2. Fall back to text/plain.
     local plain = data["text/plain"]
     if plain then
+        push("```text", "JunoOutputResult")
         for _, line in ipairs(util.clean_lines(util.get_cell_content(plain))) do
             push(line, "JunoOutputResult")
         end
+        push("```", "JunoOutputResult")
         return
     end
     -- 3. No text representation at all — show the mime types so the user knows
@@ -42,26 +40,32 @@ local function push_data_bundle(push, data)
     local mimes = vim.tbl_keys(data)
     table.sort(mimes)
     if #mimes > 0 then
+        push("```text", "JunoOutput")
         push("[" .. table.concat(mimes, ", ") .. "]", "JunoOutput")
+        push("```", "JunoOutput")
     end
 end
 
 local function output_to_lines(output)
     local lines = {}
-    local function push(text, text_hl, rail_hl)
-        table.insert(lines, { text = text, text_hl = text_hl, rail_hl = rail_hl or "JunoOutputMarker" })
+    local function push(text, text_hl)
+        table.insert(lines, { text = text, text_hl = text_hl })
     end
     if output.output_type == "stream" then
+        push("```text", "JunoOutput")
         for _, line in ipairs(util.clean_lines(util.get_cell_content(output.text))) do
             push(line, "JunoOutput")
         end
+        push("```", "JunoOutput")
     elseif output.output_type == "execute_result" or output.output_type == "display_data" then
         push_data_bundle(push, output.data or {})
     elseif output.output_type == "error" then
-        push("Error: " .. (output.evalue or "unknown"), "JunoOutputError", "JunoOutputError")
+        push("```text", "JunoOutputError")
+        push("Error: " .. (output.evalue or "unknown"), "JunoOutputError")
         for _, tb in ipairs(output.traceback or {}) do
-            push(tb:gsub("\27%[[%d;]*m", ""), "JunoOutputError", "JunoOutputError")
+            push(tb:gsub("\27%[[%d;]*m", ""), "JunoOutputError")
         end
+        push("```", "JunoOutputError")
     end
     return lines
 end
@@ -178,7 +182,6 @@ function render.render(buf, data)
 
         if cell.cell_type == "code" and #pos.out_objs > 0 then
             local out_start = pos.start + pos.h
-            local rail = core.config.output_rail or render.OUTPUT_RAIL
             for offset, obj in ipairs(pos.out_objs) do
                 local cur_row = out_start + offset - 1
                 -- Apply text highlight
@@ -187,13 +190,6 @@ function render.render(buf, data)
                         end_row = cur_row,
                         end_col = #obj.text,
                         hl_group = obj.text_hl,
-                    })
-                end
-                -- Apply rail
-                if rail and rail ~= "" then
-                    vim.api.nvim_buf_set_extmark(buf, core.ns.out, cur_row, 0, {
-                        virt_text = { { rail, obj.rail_hl } },
-                        virt_text_pos = "inline",
                     })
                 end
             end

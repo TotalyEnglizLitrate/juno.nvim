@@ -130,7 +130,6 @@ function M.setup(user_config)
     core.config = vim.tbl_deep_extend("force", {
         otter = { enabled = true, completion = true, diagnostics = true },
         watch = true,
-        output_rail = render.OUTPUT_RAIL,
         execution = {
             enabled = true,
             kernel = nil,
