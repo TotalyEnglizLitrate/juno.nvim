@@ -444,6 +444,21 @@ function exec.run(arg)
     end
 end
 
+-- Interrupt the buffer's running kernel (SIGINT for an owned kernel, a
+-- control-channel interrupt_request for an attached one). The in-flight cell
+-- surfaces a KeyboardInterrupt like any other error.
+function exec.interrupt(buf)
+    buf = buf or vim.api.nvim_get_current_buf()
+    local state = core.buf_state[buf]
+    local sess = state and state.exec
+    if not sess or sess.dead or not sess.ready then
+        notify("no running kernel to interrupt.", vim.log.levels.WARN)
+        return
+    end
+    send(sess, { op = "interrupt" })
+    notify("interrupt sent.")
+end
+
 function exec.stop(buf)
     buf = buf or vim.api.nvim_get_current_buf()
     local state = core.buf_state[buf]
