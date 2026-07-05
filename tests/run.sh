@@ -48,7 +48,7 @@ trap cleanup EXIT INT TERM
 
 require_nvim
 
-UNIT_TESTS="tracking cell_ops nbformat"
+UNIT_TESTS="tracking cell_ops nbformat incremental_render"
 EXEC_TESTS="exec interrupt pick"
 
 names=()

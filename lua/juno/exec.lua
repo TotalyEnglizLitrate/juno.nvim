@@ -71,7 +71,7 @@ local function apply_output(buf, cell_id, output)
     persist.sync_buffer(buf)  -- capture in-progress edits before we rewrite the buffer
     cell.outputs = cell.outputs or {}
     table.insert(cell.outputs, output)
-    render.render(buf, state.data)
+    render.render(buf, state.data, cell_id)
     vim.api.nvim_set_option_value("modified", true, { buf = buf })
 end
 
@@ -86,7 +86,7 @@ local function apply_done(buf, cell_id, execution_count)
     else
         cell.execution_count = execution_count
     end
-    render.render(buf, state.data)
+    render.render(buf, state.data, cell_id)
     vim.api.nvim_set_option_value("modified", true, { buf = buf })
 end
 
@@ -380,7 +380,7 @@ local function submit(buf, nb_id, code, done_cb)
     if cell then
         cell.outputs = {}
         cell.execution_count = vim.NIL
-        render.render(buf, state.data)
+        render.render(buf, state.data, nb_id)
         vim.api.nvim_set_option_value("modified", true, { buf = buf })
     end
     sess.pending[nb_id] = done_cb or function() end

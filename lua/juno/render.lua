@@ -130,98 +130,158 @@ local function mark_for(state, cell_id)
     return m
 end
 
-function render.render(buf, data)
+local function render_cell_block(cell, cell_num, lang)
+    local cell_lines = {}
+    local out_objs = {}
+
+    table.insert(cell_lines, "")  -- spacer line before cell content
+    table.insert(cell_lines, "")  -- phantom line for cell number
+    table.insert(cell_lines, "")  -- spacer line so cell content is not immediately below the marker
+    -- Only code cells are fenced; markdown and raw cells render as plain lines.
+    -- (sync_buffer strips fences for code cells only, so fencing a raw cell would
+    -- bake the ``` lines into its source on save.)
+    local src = util.clean_lines(util.get_cell_content(cell.source))
+    local h
+    if cell.cell_type == "code" then
+        table.insert(cell_lines, "```" .. lang)
+        vim.list_extend(cell_lines, src)
+        table.insert(cell_lines, "```")
+        h = #src + 2
+    else
+        vim.list_extend(cell_lines, src)
+        h = #src
+    end
+
+    if cell.cell_type == "code" and cell.outputs and #cell.outputs > 0 then
+        for _, out in ipairs(cell.outputs) do
+            vim.list_extend(out_objs, output_to_lines(out, cell_num))
+        end
+        for _, obj in ipairs(out_objs) do
+            table.insert(cell_lines, obj.text)
+        end
+    end
+
+    table.insert(cell_lines, "")  -- trailing empty line
+    return cell_lines, h, out_objs
+end
+
+local function set_cell_extmarks(buf, state, cell_id, cell_num, pos, mark)
+    vim.api.nvim_buf_set_extmark(buf, core.ns.num, pos.phantom, 0, {
+        id = mark,
+        virt_text = { { "[" .. cell_num .. "]", "InlayHint" } },
+        virt_text_pos = "overlay",
+    })
+
+    vim.api.nvim_buf_set_extmark(buf, core.ns.src, pos.start, 0, {
+        end_row = pos.start + pos.h,
+        id = mark,
+    })
+
+    if #pos.out_objs > 0 then
+        local out_start = pos.start + pos.h
+        for offset, obj in ipairs(pos.out_objs) do
+            local cur_row = out_start + offset - 1
+            if obj.is_header then
+                vim.api.nvim_buf_set_extmark(buf, core.ns.out, cur_row, 0, {
+                    virt_text = { { obj.label, obj.text_hl } },
+                    virt_text_pos = "overlay",
+                })
+            elseif obj.text_hl then
+                vim.api.nvim_buf_set_extmark(buf, core.ns.out, cur_row, 0, {
+                    end_row = cur_row,
+                    end_col = #obj.text,
+                    hl_group = obj.text_hl,
+                })
+            end
+        end
+    end
+end
+
+function render.render(buf, data, target_cell_id)
     local lang = nbformat.kernel_language(data)
     local state = core.buf_state[buf]
-    -- Rebuild the mark -> cell-id reverse map each render; mark_ids (cell-id ->
-    -- mark) persists on state so a cell keeps its extmark handle as it moves.
+
+    -- Incremental render path
+    if target_cell_id and state and state.mark_ids and state.mark_ids[target_cell_id] then
+        local list_idx = nbformat.index_by_id(data.cells or {}, target_cell_id)
+        if list_idx then
+            local cell = data.cells[list_idx]
+            local mark = state.mark_ids[target_cell_id]
+            local old_mark = vim.api.nvim_buf_get_extmark_by_id(buf, core.ns.src, mark, { details = true })
+
+            if old_mark and #old_mark > 0 then
+                local old_start_row = old_mark[1]
+                local block_start = old_start_row - 3
+
+                -- Find block_end by querying the next cell's start row
+                local block_end
+                if list_idx < #(data.cells or {}) then
+                    local next_cell = data.cells[list_idx + 1]
+                    local next_mark_id = state.mark_ids[next_cell.id]
+                    local next_mark = next_mark_id
+                        and vim.api.nvim_buf_get_extmark_by_id(buf, core.ns.src, next_mark_id, { details = true })
+                    if next_mark and #next_mark > 0 then
+                        block_end = next_mark[1] - 3
+                    end
+                end
+                if not block_end then
+                    block_end = vim.api.nvim_buf_line_count(buf)
+                end
+
+                -- Render the cell block
+                local cell_lines, h_new, out_objs = render_cell_block(cell, list_idx, lang)
+
+                -- Replace only the cell's lines in the buffer
+                vim.api.nvim_buf_set_lines(buf, block_start, block_end, false, cell_lines)
+
+                -- Clear old extmarks in the output namespace range for this block
+                vim.api.nvim_buf_clear_namespace(buf, core.ns.out, block_start, block_end)
+
+                -- Re-register in mark_cell
+                state.mark_cell[mark] = target_cell_id
+
+                -- Place the new extmarks
+                local pos = {
+                    phantom = block_start + 1,
+                    start = block_start + 3,
+                    h = h_new,
+                    out_objs = out_objs,
+                }
+                set_cell_extmarks(buf, state, target_cell_id, list_idx, pos, mark)
+                return
+            end
+        end
+    end
+
+    -- Fallback: Full Re-render path
     if state then state.mark_cell = {} end
     local lines = {}
     local cell_pos = {}
     local idx = 0
 
     for i, cell in ipairs(data.cells or {}) do
+        local cell_lines, h, out_objs = render_cell_block(cell, i, lang)
+
         local phantom_row = idx + 1
         local start = idx + 3
-        local src = util.clean_lines(util.get_cell_content(cell.source))
-        local h
 
-        table.insert(lines, "")  -- spacer line before cell content
-        table.insert(lines, "")  -- phantom line for cell number
-        table.insert(lines, "")  -- spacer line so cell content is not immediately below the marker
-        -- Only code cells are fenced; markdown and raw cells render as plain lines.
-        -- (sync_buffer strips fences for code cells only, so fencing a raw cell would
-        -- bake the ``` lines into its source on save.)
-        if cell.cell_type == "code" then
-            table.insert(lines, "```" .. lang)
-            vim.list_extend(lines, src)
-            table.insert(lines, "```")
-            h = #src + 2
-        else
-            vim.list_extend(lines, src)
-            h = #src
-        end
+        vim.list_extend(lines, cell_lines)
+        cell_pos[i] = { start = start, h = h, out_objs = out_objs, phantom = phantom_row }
 
-        local out_objs = {}
-        if cell.cell_type == "code" and cell.outputs and #cell.outputs > 0 then
-            for _, out in ipairs(cell.outputs) do
-                vim.list_extend(out_objs, output_to_lines(out, i))
-            end
-            for _, obj in ipairs(out_objs) do
-                table.insert(lines, obj.text)
-            end
-        end
-
-        table.insert(lines, "")
         local out_h = #out_objs
         idx = idx + 3 + h + out_h + 1
-        cell_pos[i] = { start = start, h = h, out_objs = out_objs, phantom = phantom_row }
     end
 
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
 
-    -- Clear prior extmarks so render() is idempotent (it's re-run when cells
-    -- are added). ns.out extmarks use auto-ids, so without this they'd stack up.
     vim.api.nvim_buf_clear_namespace(buf, core.ns.src, 0, -1)
     vim.api.nvim_buf_clear_namespace(buf, core.ns.out, 0, -1)
     vim.api.nvim_buf_clear_namespace(buf, core.ns.num, 0, -1)
 
     for i, cell in ipairs(data.cells or {}) do
         local pos = cell_pos[i]
-        -- Stable per-cell extmark handle (falls back to position if this buffer
-        -- has no state, which shouldn't happen for a rendered notebook). The
-        -- displayed [n] stays positional so cell numbers read 1..N as before.
         local mark = state and mark_for(state, cell.id) or i
-
-        vim.api.nvim_buf_set_extmark(buf, core.ns.num, pos.phantom, 0, {
-            id = mark,
-            virt_text = { { "[" .. i .. "]", "InlayHint" } },
-            virt_text_pos = "overlay",
-        })
-
-        vim.api.nvim_buf_set_extmark(buf, core.ns.src, pos.start, 0, {
-            end_row = pos.start + pos.h,
-            id = mark,
-        })
-
-        if cell.cell_type == "code" and #pos.out_objs > 0 then
-            local out_start = pos.start + pos.h
-            for offset, obj in ipairs(pos.out_objs) do
-                local cur_row = out_start + offset - 1
-                if obj.is_header then
-                    vim.api.nvim_buf_set_extmark(buf, core.ns.out, cur_row, 0, {
-                        virt_text = { { obj.label, obj.text_hl } },
-                        virt_text_pos = "overlay",
-                    })
-                elseif obj.text_hl then
-                    vim.api.nvim_buf_set_extmark(buf, core.ns.out, cur_row, 0, {
-                        end_row = cur_row,
-                        end_col = #obj.text,
-                        hl_group = obj.text_hl,
-                    })
-                end
-            end
-        end
+        set_cell_extmarks(buf, state, cell.id, i, pos, mark)
     end
 end
 
