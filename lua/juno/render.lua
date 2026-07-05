@@ -83,7 +83,8 @@ local function output_to_lines(output, cell_num)
         push("```", "JunoOutputError")
     end
     
-    lines[header_idx].text = string.format("[%d:output:%s%s]", cell_num, out_type, out_details)
+    lines[header_idx].text = ""
+    lines[header_idx].label = string.format("[%d:output:%s%s]", cell_num, out_type, out_details)
     lines[header_idx].text_hl = "InlayHint"
     
     return lines
@@ -203,7 +204,12 @@ function render.render(buf, data)
             local out_start = pos.start + pos.h
             for offset, obj in ipairs(pos.out_objs) do
                 local cur_row = out_start + offset - 1
-                if obj.text_hl then
+                if obj.is_header then
+                    vim.api.nvim_buf_set_extmark(buf, core.ns.out, cur_row, 0, {
+                        virt_text = { { obj.label, obj.text_hl } },
+                        virt_text_pos = "overlay",
+                    })
+                elseif obj.text_hl then
                     vim.api.nvim_buf_set_extmark(buf, core.ns.out, cur_row, 0, {
                         end_row = cur_row,
                         end_col = #obj.text,
