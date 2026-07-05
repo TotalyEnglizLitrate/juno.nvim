@@ -54,7 +54,8 @@ local function output_to_lines(output, cell_num)
         table.insert(lines, { text = text, text_hl = text_hl })
     end
     
-    local header_idx = #lines + 1
+    local header_idx = #lines + 2
+    table.insert(lines, { text = ""})
     table.insert(lines, { text = "", is_header = true, label = "" })
     table.insert(lines, { text = "" })
     
@@ -140,11 +141,12 @@ function render.render(buf, data)
     local idx = 0
 
     for i, cell in ipairs(data.cells or {}) do
-        local phantom_row = idx
-        local start = idx + 2
+        local phantom_row = idx + 1
+        local start = idx + 3
         local src = util.clean_lines(util.get_cell_content(cell.source))
         local h
 
+        table.insert(lines, "")  -- spacer line before cell content
         table.insert(lines, "")  -- phantom line for cell number
         table.insert(lines, "")  -- spacer line so cell content is not immediately below the marker
         -- Only code cells are fenced; markdown and raw cells render as plain lines.
@@ -172,7 +174,7 @@ function render.render(buf, data)
 
         table.insert(lines, "")
         local out_h = #out_objs
-        idx = idx + 2 + h + out_h + 1
+        idx = idx + 3 + h + out_h + 1
         cell_pos[i] = { start = start, h = h, out_objs = out_objs, phantom = phantom_row }
     end
 
