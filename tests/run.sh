@@ -80,6 +80,7 @@ for label in "${names[@]}"; do
     rc="$(cat "$TMP/rc.$label" 2>/dev/null || echo 1)"
     if [ "$rc" = "0" ]; then
         pass=$((pass + 1)); printf '  ok   %s\n' "$label"
+        sed 's/^/       /' "$TMP/out.$label"
     else
         fail=$((fail + 1)); printf '  FAIL %s\n' "$label"
         sed 's/^/       /' "$TMP/out.$label"

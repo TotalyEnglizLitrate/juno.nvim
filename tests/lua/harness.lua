@@ -6,13 +6,22 @@ local T = { failures = {}, n = 0 }
 
 function T.check(cond, msg)
     T.n = T.n + 1
-    if not cond then T.failures[#T.failures + 1] = msg or ("check #" .. T.n) end
+    if cond then
+        if msg then io.write("  - " .. msg .. "\n") end
+    else
+        T.failures[#T.failures + 1] = msg or ("check #" .. T.n)
+    end
     return cond
 end
 
 function T.eq(got, want, msg)
-    return T.check(vim.deep_equal(got, want),
-        string.format("%s: got %s, want %s", msg or "eq", vim.inspect(got), vim.inspect(want)))
+    local cond = vim.deep_equal(got, want)
+    if cond then
+        T.check(true, msg)
+    else
+        T.check(false, string.format("%s: got %s, want %s", msg or "eq", vim.inspect(got), vim.inspect(want)))
+    end
+    return cond
 end
 
 -- vim.wait that pumps the loop (uv callbacks + scheduled fns) until cond is true.
